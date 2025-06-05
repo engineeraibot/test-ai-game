@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sailboat Navigation Game</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #game-container { width: 100%; height: 100%; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="game-container"></div>
+    <script>
+        // Game code will go here
+        const gameContainer = document.getElementById('game-container');
+
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1200); // Increased far plane
+        camera.position.set(0, 30, 50);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        gameContainer.appendChild(renderer.domElement);
+        console.log("Three.js Scene, Camera, and Renderer initialized.");
+        if (!scene || !camera || !renderer) {
+            console.error("TEST FAILED: Scene, Camera, or Renderer not found!");
+        }
+
+        // Add basic lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); // Soft white light
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 20, 5); // Position the light
+        scene.add(directionalLight);
+
+        // Sky
+        const skyRadius = 500;
+        const skyGeo = new THREE.SphereGeometry(skyRadius, 32, 16);
+        const skyMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.BackSide });
+        const sky = new THREE.Mesh(skyGeo, skyMat);
+        scene.add(sky);
+
+        // Function to create the ocean
+        function createOcean() {
+            // Increased segments for wave deformation
+            const oceanGeometry = new THREE.PlaneGeometry(1000, 1000, 50, 50);
+            const oceanMaterial = new THREE.MeshPhongMaterial({
+                color: 0x006994,
+                shininess: 50,
+                // side: THREE.DoubleSide // Not strictly necessary for a plane viewed from above
+            });
+            const oceanMesh = new THREE.Mesh(oceanGeometry, oceanMaterial);
+            oceanMesh.rotation.x = -Math.PI / 2; // Orient horizontally
+            oceanMesh.position.y = 0; // Sea level
+            return oceanMesh;
+        }
+
+        // Create and add ocean to the scene
+        const ocean = createOcean(); // This is our oceanMesh
+        scene.add(ocean);
+        console.log("Ocean created and added to scene.");
+        if (!ocean || !scene.children.includes(ocean)) {
+            console.error("TEST FAILED: Ocean not created or not added to scene!");
+        }
+
+        let sailboat; // Declare global sailboat variable
+
+        // Function to create the sailboat
+        function createSailboat() {
+            const sailboatGroup = new THREE.Group();
+
+            // Hull
+            const hullGeo = new THREE.BoxGeometry(2, 1, 4); // width, height, depth
+            const hullMat = new THREE.MeshPhongMaterial({ color: 0x8B4513, shininess: 30 });
+            const hull = new THREE.Mesh(hullGeo, hullMat);
+            hull.position.y = 0.5; // So the base of the hull is at y=0 in the group
+            sailboatGroup.add(hull);
+
+            // Mast
+            const mastHeight = 5;
+            const mastGeo = new THREE.CylinderGeometry(0.1, 0.1, mastHeight, 8); // radiusTop, radiusBottom, height, radialSegments
+            const mastMat = new THREE.MeshPhongMaterial({ color: 0xD2B48C, shininess: 20 });
+            const mast = new THREE.Mesh(mastGeo, mastMat);
+            mast.position.y = hull.position.y + mastHeight / 2; // On top of the hull's center
+            sailboatGroup.add(mast);
+
+            // Sail
+            const sailWidth = 3;
+            const sailHeight = 4;
+            const sailGeo = new THREE.PlaneGeometry(sailWidth, sailHeight);
+            const sailMat = new THREE.MeshPhongMaterial({ color: 0xFFFFFF, side: THREE.DoubleSide, shininess: 10 });
+            const sail = new THREE.Mesh(sailGeo, sailMat);
+            sail.position.set(0, mast.position.y + mastHeight / 2 - sailHeight / 2, -sailWidth / 2 + 0.2); // Attach to mast, slightly offset
+            sail.rotation.y = Math.PI / 2; // Rotate to be perpendicular to the boat's length initially
+            sailboatGroup.add(sail);
+
+            // Create and store bounding box
+            const sailboatBox = new THREE.Box3().setFromObject(sailboatGroup);
+            sailboatGroup.userData.boundingBox = sailboatBox;
+
+            return sailboatGroup;
+        }
+
+        // Create and add sailboat to the scene
+        sailboat = createSailboat();
+        scene.add(sailboat);
+        sailboat.position.set(0, 0.5, 0); // Position on the ocean surface
+        console.log("Sailboat created and added to scene.");
+        if (!sailboat || !scene.children.includes(sailboat)) {
+            console.error("TEST FAILED: Sailboat not created or not added to scene!");
+        }
+        camera.lookAt(sailboat.position); // Make camera look at the sailboat
+
+        // Sailboat Properties
+        sailboat.userData.velocity = new THREE.Vector3(0,0,0);
+        sailboat.userData.speed = 0;
+        // sailboat.userData.angle = 0; // Using sailboat.rotation.y directly
+
+        // Wind Variables
+        const windDirection = new THREE.Vector3(1, 0, 0).normalize(); // Blowing along positive X-axis
+        const windStrength = 0.05; // This might be used to scale sailEffectiveness or acceleration later
+
+        // Movement Constants
+        const acceleration = 0.005;
+        const maxSpeed = 0.2;
+        const turnSpeed = 0.03;
+        const friction = 0.98; // Factor to slow down the boat
+
+        // Wind Particle System Variables
+        let windParticles;
+        const particleCount = 200;
+        const particleMaterial = new THREE.PointsMaterial({ color: 0xFFFFFF, size: 0.2, transparent: true, opacity: 0.7 });
+        const particleAreaSize = 50; // Area around the boat where particles are visible
+
+        // Marine Life Variables
+        let marineLife = [];
+
+        // Clock for animations
+        let clock = new THREE.Clock();
+
+
+        // Function to create Wind Particles
+        function createWindParticles() {
+            const positions = new Float32Array(particleCount * 3);
+            const particleGeometry = new THREE.BufferGeometry();
+
+            for (let i = 0; i < particleCount; i++) {
+                positions[i * 3] = (Math.random() - 0.5) * particleAreaSize;     // x
+                positions[i * 3 + 1] = Math.random() * 2.0 + 1.0;               // y (1.0 to 3.0)
+                positions[i * 3 + 2] = (Math.random() - 0.5) * particleAreaSize; // z
+            }
+
+            particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            windParticles = new THREE.Points(particleGeometry, particleMaterial);
+            scene.add(windParticles);
+            console.log("Wind particles created and added to scene.");
+            return windParticles;
+        }
+
+        // Create wind particles
+        createWindParticles();
+
+        // Function to create a Fish
+        function createFish(position) {
+            const fishGeometry = new THREE.SphereGeometry(0.3, 16, 8); // radius, widthSegments, heightSegments
+            const fishMaterial = new THREE.MeshPhongMaterial({ color: 0xFF8C00 }); // Orange
+            const fish = new THREE.Mesh(fishGeometry, fishMaterial);
+            fish.scale.z = 1.8; // Make it elongated
+            fish.position.copy(position);
+
+            fish.userData.type = 'fish';
+            fish.userData.animationPhase = Math.random() * Math.PI * 2;
+            fish.userData.originalPosition = position.clone();
+
+            scene.add(fish);
+            marineLife.push(fish);
+            return fish;
+        }
+
+        // Function to create a SharkFin
+        function createSharkFin(position) {
+            const finGeometry = new THREE.ConeGeometry(0.3, 1, 4); // radius, height, radialSegments
+            const finMaterial = new THREE.MeshPhongMaterial({ color: 0x606060 }); // Dark Grey
+            const sharkFin = new THREE.Mesh(finGeometry, finMaterial);
+
+            // Position and orient the fin
+            sharkFin.position.copy(position);
+            sharkFin.rotation.x = Math.PI / 12; // Slight forward tilt
+            // Cone points up by default, this is fine for a fin sticking out of water.
+
+            sharkFin.userData.type = 'sharkFin';
+            sharkFin.userData.animationPhase = Math.random() * Math.PI * 2;
+            sharkFin.userData.originalPosition = position.clone();
+            sharkFin.userData.turnDirection = Math.random() > 0.5 ? 1 : -1;
+            sharkFin.userData.speed = 0.02 + Math.random() * 0.01; // Vary speed slightly
+
+            // Create and store bounding box
+            const finBox = new THREE.Box3().setFromObject(sharkFin);
+            sharkFin.userData.boundingBox = finBox;
+
+            scene.add(sharkFin);
+            marineLife.push(sharkFin);
+            return sharkFin;
+        }
+
+        // Populate Marine Life
+        for (let i = 0; i < 8; i++) {
+            const x = (Math.random() - 0.5) * 100;
+            const z = (Math.random() - 0.5) * 100;
+            const y = -0.5 - Math.random() * 1; // Slightly below ocean surface
+            createFish(new THREE.Vector3(x, y, z));
+        }
+        console.log(`Created ${marineLife.filter(m => m.userData.type === 'fish').length} fish.`);
+
+        for (let i = 0; i < 3; i++) {
+            const x = (Math.random() - 0.5) * 150;
+            const z = (Math.random() - 0.5) * 150;
+            const y = -0.1; // Fin base slightly submerged, tip above water
+            createSharkFin(new THREE.Vector3(x, y, z));
+        }
+        console.log(`Created ${marineLife.filter(m => m.userData.type === 'sharkFin').length} shark fins.`);
+        console.log(`Total marine life: ${marineLife.length}`);
+
+
+        // Populate the scene (to be replaced with sailboat specific items)
+
+        // const moveSpeed = 0.2; // Replaced by sailboat physics
+        // const rotationSpeed = 0.03; // Replaced by turnSpeed
+        const keysPressed = {
+            'ArrowUp': false,
+            'ArrowDown': false,
+            'ArrowLeft': false,
+            'ArrowRight': false
+        };
+
+        document.addEventListener('keydown', (event) => {
+            if (keysPressed.hasOwnProperty(event.key)) {
+                keysPressed[event.key] = true;
+            }
+        });
+
+        document.addEventListener('keyup', (event) => {
+            if (keysPressed.hasOwnProperty(event.key)) {
+                keysPressed[event.key] = false;
+            }
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const elapsedTime = clock.getElapsedTime();
+
+            // Animate Marine Life
+            for (let i = 0; i < marineLife.length; i++) {
+                const item = marineLife[i];
+                item.userData.animationPhase += 0.01;
+
+                if (item.userData.type === 'fish') {
+                    item.position.x = item.userData.originalPosition.x + Math.sin(item.userData.animationPhase * 0.5) * 3; // Slower, wider movement
+                    item.position.z = item.userData.originalPosition.z + Math.cos(item.userData.animationPhase * 0.3) * 2;
+                    item.rotation.y += 0.01;
+                } else if (item.userData.type === 'sharkFin') {
+                    // Move forward locally (along its current Z axis)
+                    const moveDirection = new THREE.Vector3(0, 0, 1); // Fins point "up" along Y, so move along local Z for forward
+                    moveDirection.applyQuaternion(item.quaternion);
+                    item.position.addScaledVector(moveDirection, item.userData.speed);
+
+                    item.rotation.y += item.userData.turnDirection * 0.002 * (Math.sin(item.userData.animationPhase * 0.1) + 1.5); // Vary turn speed
+
+                    if (Math.random() < 0.008) { // Slightly more frequent chance to change direction
+                        item.userData.turnDirection *= -1;
+                    }
+
+                    // Simple boundary to encourage turning back (very basic)
+                    if (item.position.length() > 150) { // If too far from origin
+                         item.rotation.y += Math.PI / 2 * item.userData.turnDirection; // Make a sharper turn
+                    }
+                }
+            }
+
+            // Animate Ocean Waves
+            if (ocean) { // 'ocean' is the variable holding the ocean mesh
+                const oceanVertices = ocean.geometry.attributes.position;
+                for (let i = 0; i < oceanVertices.count; i++) {
+                    const x = oceanVertices.getX(i);
+                    const y = oceanVertices.getY(i); // Original Y in the plane's local coords
+
+                    // Calculate wave height using sine functions
+                    // These waves are in the local Z direction of the PlaneGeometry
+                    const wave1 = Math.sin(x * 0.015 + elapsedTime * 0.6) * 0.6;
+                    const wave2 = Math.sin(y * 0.02 + elapsedTime * 0.4) * 0.4;
+                    const wave3 = Math.sin(x * 0.005 + y * 0.008 + elapsedTime * 0.8) * 0.5; // Diagonal wave
+                    const totalWaveHeight = wave1 + wave2 + wave3;
+
+                    oceanVertices.setZ(i, totalWaveHeight); // Modify local Z, which becomes world Y
+                }
+                ocean.geometry.attributes.position.needsUpdate = true;
+                ocean.geometry.computeVertexNormals(); // Important for lighting
+            }
+
+
+            if (sailboat) {
+                // Update sailboat's world bounding box (needed for collision)
+                // Note: userData.boundingBox is in local space. We need to update it if the boat deforms,
+                // but since it doesn't, we just need to transform it to world space for collision checks.
+                // The local boundingBox itself doesn't change frame-to-frame unless the boat's geometry changes.
+
+
+                // Update wind particle system position to follow sailboat
+                if (windParticles) {
+                    windParticles.position.x = sailboat.position.x;
+                    windParticles.position.z = sailboat.position.z;
+                    // Optional: Keep Y fixed or slightly above sailboat, e.g. windParticles.position.y = sailboat.position.y + 1.0;
+                    // For now, Y is global for particles as defined in createWindParticles
+
+                    const positions = windParticles.geometry.attributes.position.array;
+                    const halfArea = particleAreaSize / 2;
+
+                    for (let i = 0; i < particleCount; i++) {
+                        positions[i * 3] += windDirection.x * windStrength * 0.5;
+                        // positions[i * 3 + 1] += windDirection.y * windStrength * 0.5; // If wind has Y component
+                        positions[i * 3 + 2] += windDirection.z * windStrength * 0.5;
+
+                        // Wrapping logic (local to the windParticles group)
+                        if (positions[i * 3] > halfArea) positions[i * 3] = -halfArea + Math.random();
+                        if (positions[i * 3] < -halfArea) positions[i * 3] = halfArea - Math.random();
+
+                        // Y position can be kept static or varied slowly if desired
+                        // For now, Y positions are not wrapped, they stay in their initial random band.
+
+                        if (positions[i * 3 + 2] > halfArea) positions[i * 3 + 2] = -halfArea + Math.random();
+                        if (positions[i * 3 + 2] < -halfArea) positions[i * 3 + 2] = halfArea - Math.random();
+                    }
+                    windParticles.geometry.attributes.position.needsUpdate = true;
+                }
+
+                // Sailboat Physics and Movement (before camera update, after collision response)
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(sailboat.quaternion);
+                const angleToWind = forward.angleTo(windDirection);
+
+                // Simplified sail effectiveness: 1 for tailwind, 0.5 for crosswind, 0 for headwind.
+                let sailEffectiveness = (1 - Math.cos(angleToWind)) / 2;
+                let actualMaxSpeed = maxSpeed * sailEffectiveness;
+
+                if (keysPressed['ArrowUp']) {
+                    sailboat.userData.speed += acceleration * sailEffectiveness;
+                }
+                if (keysPressed['ArrowDown']) {
+                    sailboat.userData.speed -= acceleration * 0.5;
+                }
+                sailboat.userData.speed = Math.max(0, Math.min(sailboat.userData.speed, actualMaxSpeed));
+
+                if (keysPressed['ArrowLeft']) {
+                    sailboat.rotation.y += turnSpeed;
+                }
+                if (keysPressed['ArrowRight']) {
+                    sailboat.rotation.y -= turnSpeed;
+                }
+
+                sailboat.userData.velocity.set(0, 0, -sailboat.userData.speed);
+                sailboat.userData.velocity.applyQuaternion(sailboat.quaternion);
+                sailboat.position.add(sailboat.userData.velocity);
+                sailboat.userData.speed *= friction;
+
+                // Collision Detection (Sailboat vs SharkFins)
+                if (sailboat.userData.boundingBox) {
+                    const sailboatWorldBox = new THREE.Box3();
+                    sailboatWorldBox.copy(sailboat.userData.boundingBox).applyMatrix4(sailboat.matrixWorld);
+
+                    for (const item of marineLife) {
+                        if (item.userData.type === 'sharkFin' && item.userData.boundingBox) {
+                            const finWorldBox = new THREE.Box3();
+                            // It's important that item.matrixWorld is up-to-date.
+                            // It usually is if it's part of the scene graph and rendered.
+                            finWorldBox.copy(item.userData.boundingBox).applyMatrix4(item.matrixWorld);
+
+                            if (sailboatWorldBox.intersectsBox(finWorldBox)) {
+                                console.log("Collision with shark fin!");
+                                sailboat.userData.speed *= 0.5; // Slow down the sailboat
+                                // item.visible = false; // Example: make fin disappear
+                            }
+                        }
+                    }
+                }
+
+                // Camera Follow Logic
+                const cameraOffset = new THREE.Vector3(0, 10, 20);
+                const cameraPosition = cameraOffset.applyMatrix4(sailboat.matrixWorld);
+                camera.position.copy(cameraPosition);
+                camera.lookAt(sailboat.position);
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }, false);
+    </script>
+</body>
+</html>

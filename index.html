@@ -1,1 +1,284 @@
-<!--Comment-->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Low Poly Driving Game</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #game-container { width: 100%; height: 100%; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="game-container"></div>
+    <script>
+        // Game code will go here
+        const gameContainer = document.getElementById('game-container');
+        let car; // Declare global car variable
+        const collidableObjects = []; // Global array for collidable objects
+
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1200); // Increased far plane
+        // camera.position.set(0, 30, 50); // Adjusted camera position - REMOVED
+        // camera.lookAt(0, 0, 0); // REMOVED
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        gameContainer.appendChild(renderer.domElement);
+        console.log("Three.js Scene, Camera, and Renderer initialized.");
+        if (!scene || !camera || !renderer) {
+            console.error("TEST FAILED: Scene, Camera, or Renderer not found!");
+        }
+
+        // Add basic lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); // Soft white light
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 20, 5); // Position the light
+        scene.add(directionalLight);
+
+        // Sky
+        const skyRadius = 500;
+        const skyGeo = new THREE.SphereGeometry(skyRadius, 32, 16);
+        const skyMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.BackSide });
+        const sky = new THREE.Mesh(skyGeo, skyMat);
+        scene.add(sky);
+
+        // Rainbow
+        const rainbowGroup = new THREE.Group();
+        const rainbowColors = [0xFF0000, 0xFF7F00, 0xFFFF00, 0x00FF00, 0x0000FF, 0x4B0082, 0x9400D3];
+        const rainbowRadius = 200;
+        const tubeThickness = 5;
+        const arcAngle = Math.PI;
+
+        for (let i = 0; i < rainbowColors.length; i++) {
+            const color = rainbowColors[i];
+            const torusRadius = rainbowRadius - i * (tubeThickness + 0.5);
+
+            const torusGeo = new THREE.TorusGeometry(torusRadius, tubeThickness, 16, 50, arcAngle);
+            const torusMat = new THREE.MeshBasicMaterial({ color: color });
+            const torusSegment = new THREE.Mesh(torusGeo, torusMat);
+
+            rainbowGroup.add(torusSegment);
+        }
+        rainbowGroup.position.set(0, 60, -220);
+        rainbowGroup.rotation.x = -Math.PI / 20;
+        scene.add(rainbowGroup);
+
+        function createBuilding(position, size, color) {
+            const buildingGeo = new THREE.BoxGeometry(size.width, size.height, size.depth);
+            const buildingMat = new THREE.MeshLambertMaterial({ color: color });
+            const building = new THREE.Mesh(buildingGeo, buildingMat);
+            building.position.set(position.x, position.y + size.height / 2, position.z);
+
+            // Collision data
+            building.userData.boundingBox = new THREE.Box3().setFromObject(building);
+            collidableObjects.push(building); // Add to collidable array
+
+            return building;
+        }
+
+        function createTree(position, trunkColor = 0x8B4513, canopyColor = 0x228B22) {
+            const tree = new THREE.Group();
+
+            const trunkHeight = 2;
+            const trunkRadius = 0.2;
+            const trunkGeo = new THREE.CylinderGeometry(trunkRadius, trunkRadius, trunkHeight, 8);
+            const trunkMat = new THREE.MeshLambertMaterial({ color: trunkColor });
+            const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+            trunk.position.y = trunkHeight / 2; // Base of trunk at y=0 for the group
+            tree.add(trunk);
+
+            const canopyRadius = 1.2;
+            // Using Icosahedron for a more low-poly look
+            const canopyGeo = new THREE.IcosahedronGeometry(canopyRadius, 0); // Last param is detail
+            const canopyMat = new THREE.MeshLambertMaterial({ color: canopyColor });
+            const canopy = new THREE.Mesh(canopyGeo, canopyMat);
+            canopy.position.y = trunkHeight + canopyRadius * 0.7; // Position canopy on top of trunk
+            tree.add(canopy);
+
+            tree.position.set(position.x, position.y, position.z);
+
+            // Collision data for the tree
+            tree.userData.boundingBox = new THREE.Box3().setFromObject(tree);
+            collidableObjects.push(tree);
+
+            return tree;
+        }
+
+        function createCar() {
+            const carGroup = new THREE.Group();
+
+            // Car body
+            const bodyWidth = 2;
+            const bodyHeight = 1;
+            const bodyDepth = 4;
+            const carBodyGeo = new THREE.BoxGeometry(bodyWidth, bodyHeight, bodyDepth);
+            const carBodyMat = new THREE.MeshLambertMaterial({ color: 0xff0000 }); // Red color
+            const carBody = new THREE.Mesh(carBodyGeo, carBodyMat);
+            carBody.position.y = bodyHeight / 2;
+            carBody.userData.isCarBody = true; // Mark as car body for collision
+            carGroup.add(carBody);
+
+            // Wheels
+            const wheelRadius = 0.4;
+            const wheelThickness = 0.3;
+            const wheelGeo = new THREE.CylinderGeometry(wheelRadius, wheelRadius, wheelThickness, 16);
+            wheelGeo.rotateX(Math.PI / 2);
+            const wheelMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+
+            const wheelPositions = [
+                { x: -bodyWidth / 2 - wheelThickness / 2, y: wheelRadius - bodyHeight/2, z: bodyDepth / 2 - wheelRadius * 1.5 },
+                { x:  bodyWidth / 2 + wheelThickness / 2, y: wheelRadius - bodyHeight/2, z: bodyDepth / 2 - wheelRadius * 1.5 },
+                { x: -bodyWidth / 2 - wheelThickness / 2, y: wheelRadius - bodyHeight/2, z: -bodyDepth / 2 + wheelRadius * 1.5 },
+                { x:  bodyWidth / 2 + wheelThickness / 2, y: wheelRadius - bodyHeight/2, z: -bodyDepth / 2 + wheelRadius * 1.5 }
+            ];
+
+            wheelPositions.forEach(pos => {
+                const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+                wheel.position.set(pos.x, pos.y + bodyHeight/2 , pos.z);
+                carGroup.add(wheel);
+            });
+
+            carGroup.position.y = wheelRadius;
+            return carGroup;
+        }
+
+        function createStreet(position, length, width) {
+            const streetGeo = new THREE.PlaneGeometry(length, width);
+            const streetMat = new THREE.MeshLambertMaterial({ color: 0x444444, side: THREE.DoubleSide });
+            const street = new THREE.Mesh(streetGeo, streetMat);
+            street.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+            street.position.set(position.x, position.y, position.z);
+            return street;
+        }
+
+        // Populate the scene
+        // Add a ground plane (can also be a large street)
+        const ground = createStreet({x: 0, y: 0, z: 0}, 100, 100);
+        scene.add(ground);
+
+        // Add some buildings
+        const buildingColors = [0xff6347, 0x4682b4, 0x32cd32, 0xffd700, 0x6a5acd];
+        for (let i = 0; i < 10; i++) {
+            const x = (Math.random() - 0.5) * 80;
+            const z = (Math.random() - 0.5) * 80;
+            const height = Math.random() * 15 + 5;
+            const width = Math.random() * 5 + 3;
+            const depth = Math.random() * 5 + 3;
+            const color = buildingColors[Math.floor(Math.random() * buildingColors.length)];
+
+            const building = createBuilding({x: x, y: 0, z: z}, {width: width, height: height, depth: depth}, color);
+            scene.add(building);
+        }
+
+        // Add some trees
+        for (let i = 0; i < 20; i++) {
+            const x = (Math.random() - 0.5) * 90;
+            const z = (Math.random() - 0.5) * 90;
+            const tree = createTree({x: x, y: 0, z: z});
+            scene.add(tree);
+        }
+        console.log(`City generation complete. Number of collidable objects: ${collidableObjects.length}`);
+        if (collidableObjects.length === 0) {
+            console.warn("TEST WARNING: No collidable objects were created.");
+        }
+
+        car = createCar();
+        scene.add(car);
+        console.log("Car created and added to scene.");
+        if (!car || !scene.children.includes(car)) {
+            console.error("TEST FAILED: Car not created or not added to scene!");
+        }
+        car.position.set(0, car.position.y, 10);
+
+        const moveSpeed = 0.2;
+        const rotationSpeed = 0.03;
+        const keysPressed = {
+            'ArrowUp': false,
+            'ArrowDown': false,
+            'ArrowLeft': false,
+            'ArrowRight': false
+        };
+
+        document.addEventListener('keydown', (event) => {
+            if (keysPressed.hasOwnProperty(event.key)) {
+                keysPressed[event.key] = true;
+            }
+        });
+
+        document.addEventListener('keyup', (event) => {
+            if (keysPressed.hasOwnProperty(event.key)) {
+                keysPressed[event.key] = false;
+            }
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (car) {
+                const previousPosition = car.position.clone();
+                const previousRotation = car.rotation.clone();
+
+                const currentSpeed = keysPressed['ArrowUp'] ? moveSpeed : (keysPressed['ArrowDown'] ? -moveSpeed / 2 : 0);
+
+                if (currentSpeed !== 0) {
+                    if (keysPressed['ArrowLeft']) {
+                        car.rotation.y += rotationSpeed;
+                    }
+                    if (keysPressed['ArrowRight']) {
+                        car.rotation.y -= rotationSpeed;
+                    }
+                }
+
+                car.translateZ(-currentSpeed);
+
+                // Collision detection part
+                const carBody = car.children.find(child => child.userData.isCarBody);
+                let collisionDetected = false;
+
+                if (carBody) {
+                    if (!carBody.userData.boundingBox) {
+                        carBody.userData.boundingBox = new THREE.Box3().setFromObject(carBody);
+                    } else {
+                        carBody.userData.boundingBox.setFromObject(carBody);
+                    }
+
+                    for (const obj of collidableObjects) {
+                        if (obj.userData.boundingBox && carBody.userData.boundingBox.intersectsBox(obj.userData.boundingBox)) {
+                            collisionDetected = true;
+                            break;
+                        }
+                    }
+                } else {
+                    console.warn("Car body not found for collision detection.");
+                }
+
+                if (collisionDetected) {
+                    console.log("Collision detected! Car position reverted.");
+                    car.position.copy(previousPosition);
+                    car.rotation.copy(previousRotation);
+                }
+
+                // Camera follow logic
+                const cameraOffset = new THREE.Vector3(0, 5, 12);
+                const cameraPosition = cameraOffset.applyMatrix4(car.matrixWorld);
+                camera.position.copy(cameraPosition);
+                camera.lookAt(car.position);
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }, false);
+    </script>
+</body>
+</html>

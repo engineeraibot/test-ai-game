@@ -26,8 +26,48 @@
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Optional: for softer shadows
         gameContainer.appendChild(renderer.domElement);
         console.log("Three.js Scene, Camera, and Renderer initialized.");
+
+        const textureLoader = new THREE.TextureLoader();
+
+        // Placeholder Textures
+        function createPlaceholderTexture(color) {
+            const data = new Uint8Array([color.r * 255, color.g * 255, color.b * 255, 255]);
+            const texture = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat);
+            texture.needsUpdate = true;
+            return texture;
+        }
+
+        const placeholderRedTexture = createPlaceholderTexture(new THREE.Color(0xff0000)); // For car
+        const placeholderGreyTexture = createPlaceholderTexture(new THREE.Color(0x808080)); // For building
+        const placeholderBrownTexture = createPlaceholderTexture(new THREE.Color(0x8B4513)); // For tree trunk
+        const placeholderGreenTexture = createPlaceholderTexture(new THREE.Color(0x00ff00)); // For tree canopy
+        const placeholderDarkGreyTexture = createPlaceholderTexture(new THREE.Color(0x444444)); // For street
+        const placeholderBlackTexture = createPlaceholderTexture(new THREE.Color(0x111111)); // For wheels
+
+        // Skybox
+        const cubeTextureLoader = new THREE.CubeTextureLoader();
+        const skyboxTextures = [
+            'path/to/your/skybox/px.jpg', // Right face (+X)
+            'path/to/your/skybox/nx.jpg', // Left face (-X)
+            'path/to/your/skybox/py.jpg', // Top face (+Y)
+            'path/to/your/skybox/ny.jpg', // Bottom face (-Y)
+            'path/to/your/skybox/pz.jpg', // Front face (+Z)
+            'path/to/your/skybox/nz.jpg'  // Back face (-Z)
+        ];
+        const skyboxCubeTexture = cubeTextureLoader.load(skyboxTextures, () => {
+            skyboxCubeTexture.encoding = THREE.sRGBEncoding; // Optional: for correct color space if textures are sRGB
+            scene.background = skyboxCubeTexture;
+            console.log("Skybox loaded and set as scene background.");
+        }, undefined, (error) => {
+            console.error("Skybox texture loading failed:", error);
+            // Fallback to a simple color if skybox fails to load
+            scene.background = new THREE.Color(0x87CEEB);
+        });
+
         if (!scene || !camera || !renderer) {
             console.error("TEST FAILED: Scene, Camera, or Renderer not found!");
         }
@@ -38,14 +78,16 @@
 
         const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
         directionalLight.position.set(10, 20, 5); // Position the light
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 1024; // default is 512
+        directionalLight.shadow.mapSize.height = 1024; // default is 512
+        directionalLight.shadow.camera.near = 0.5; // default
+        directionalLight.shadow.camera.far = 50; // default
+        directionalLight.shadow.camera.left = -30; // Adjust based on scene size
+        directionalLight.shadow.camera.right = 30; // Adjust based on scene size
+        directionalLight.shadow.camera.top = 30; // Adjust based on scene size
+        directionalLight.shadow.camera.bottom = -30; // Adjust based on scene size
         scene.add(directionalLight);
-
-        // Sky
-        const skyRadius = 500;
-        const skyGeo = new THREE.SphereGeometry(skyRadius, 32, 16);
-        const skyMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.BackSide });
-        const sky = new THREE.Mesh(skyGeo, skyMat);
-        scene.add(sky);
 
         // Rainbow
         const rainbowGroup = new THREE.Group();
@@ -70,9 +112,16 @@
 
         function createBuilding(position, size, color) {
             const buildingGeo = new THREE.BoxGeometry(size.width, size.height, size.depth);
-            const buildingMat = new THREE.MeshLambertMaterial({ color: color });
+            // TODO: Consider different textures for walls, roof, windows etc.
+            const buildingMat = new THREE.MeshStandardMaterial({
+                map: placeholderGreyTexture,
+                metalness: 0.3, // Example value, buildings are typically not very metallic
+                roughness: 0.8  // Example value, buildings are typically rough
+            });
             const building = new THREE.Mesh(buildingGeo, buildingMat);
             building.position.set(position.x, position.y + size.height / 2, position.z);
+            building.castShadow = true;
+            building.receiveShadow = true;
 
             // Collision data
             building.userData.boundingBox = new THREE.Box3().setFromObject(building);
@@ -87,19 +136,31 @@
             const trunkHeight = 2;
             const trunkRadius = 0.2;
             const trunkGeo = new THREE.CylinderGeometry(trunkRadius, trunkRadius, trunkHeight, 8);
-            const trunkMat = new THREE.MeshLambertMaterial({ color: trunkColor });
+            const trunkMat = new THREE.MeshStandardMaterial({
+                map: placeholderBrownTexture,
+                metalness: 0.1, // Trees are not metallic
+                roughness: 0.9  // Bark is rough
+            });
             const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+            trunk.castShadow = true;
             trunk.position.y = trunkHeight / 2; // Base of trunk at y=0 for the group
             tree.add(trunk);
 
             const canopyRadius = 1.2;
             // Using Icosahedron for a more low-poly look
             const canopyGeo = new THREE.IcosahedronGeometry(canopyRadius, 0); // Last param is detail
-            const canopyMat = new THREE.MeshLambertMaterial({ color: canopyColor });
+            const canopyMat = new THREE.MeshStandardMaterial({
+                map: placeholderGreenTexture,
+                metalness: 0.1, // Leaves are not metallic
+                roughness: 0.8  // Leaves have some roughness
+            });
             const canopy = new THREE.Mesh(canopyGeo, canopyMat);
+            canopy.castShadow = true;
             canopy.position.y = trunkHeight + canopyRadius * 0.7; // Position canopy on top of trunk
             tree.add(canopy);
 
+            tree.castShadow = true;
+            tree.receiveShadow = true;
             tree.position.set(position.x, position.y, position.z);
 
             // Collision data for the tree
@@ -117,8 +178,13 @@
             const bodyHeight = 1;
             const bodyDepth = 4;
             const carBodyGeo = new THREE.BoxGeometry(bodyWidth, bodyHeight, bodyDepth);
-            const carBodyMat = new THREE.MeshLambertMaterial({ color: 0xff0000 }); // Red color
+            const carBodyMat = new THREE.MeshStandardMaterial({
+                map: placeholderRedTexture,
+                metalness: 0.5, // Example value
+                roughness: 0.7  // Example value
+            });
             const carBody = new THREE.Mesh(carBodyGeo, carBodyMat);
+            carBody.castShadow = true;
             carBody.position.y = bodyHeight / 2;
             carBody.userData.isCarBody = true; // Mark as car body for collision
             carGroup.add(carBody);
@@ -128,7 +194,11 @@
             const wheelThickness = 0.3;
             const wheelGeo = new THREE.CylinderGeometry(wheelRadius, wheelRadius, wheelThickness, 16);
             wheelGeo.rotateX(Math.PI / 2);
-            const wheelMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+            const wheelMat = new THREE.MeshStandardMaterial({
+                map: placeholderBlackTexture,
+                metalness: 0.3, // Example value
+                roughness: 0.8  // Example value
+            });
 
             const wheelPositions = [
                 { x: -bodyWidth / 2 - wheelThickness / 2, y: wheelRadius - bodyHeight/2, z: bodyDepth / 2 - wheelRadius * 1.5 },
@@ -139,17 +209,25 @@
 
             wheelPositions.forEach(pos => {
                 const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+                wheel.castShadow = true;
                 wheel.position.set(pos.x, pos.y + bodyHeight/2 , pos.z);
                 carGroup.add(wheel);
             });
 
+            carGroup.castShadow = true;
+            carGroup.receiveShadow = true;
             carGroup.position.y = wheelRadius;
             return carGroup;
         }
 
         function createStreet(position, length, width) {
             const streetGeo = new THREE.PlaneGeometry(length, width);
-            const streetMat = new THREE.MeshLambertMaterial({ color: 0x444444, side: THREE.DoubleSide });
+            const streetMat = new THREE.MeshStandardMaterial({
+                map: placeholderDarkGreyTexture,
+                metalness: 0.2, // Asphalt isn't very metallic
+                roughness: 0.9,  // Asphalt is rough
+                side: THREE.DoubleSide // Keep this property
+            });
             const street = new THREE.Mesh(streetGeo, streetMat);
             street.rotation.x = -Math.PI / 2; // Rotate to be horizontal
             street.position.set(position.x, position.y, position.z);
@@ -159,6 +237,7 @@
         // Populate the scene
         // Add a ground plane (can also be a large street)
         const ground = createStreet({x: 0, y: 0, z: 0}, 100, 100);
+        ground.receiveShadow = true;
         scene.add(ground);
 
         // Add some buildings

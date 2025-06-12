@@ -47,7 +47,7 @@
 
         // 4. Create a PerspectiveCamera
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 5; // Initial camera Z, will be overridden by follow logic
+        // Camera will be parented to player
 
         // 5. Add basic lighting
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
@@ -57,12 +57,29 @@
         directionalLight.position.set(0, 1, 0);
         scene.add(directionalLight);
 
-        // Create Player Mesh
-        const playerGeometry = new THREE.BoxGeometry(1, 1, 1);
-        const playerMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
-        const player = new THREE.Mesh(playerGeometry, playerMaterial);
-        player.position.y = 0.5; // Initial Y position
+        // Create Player Group (acting as the player)
+        const player = new THREE.Group();
+        player.position.y = 0; // Pivot at the feet for the group
         scene.add(player);
+
+        const playerBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 }); // Green
+
+        // Player Body (Cylinder)
+        const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.0, 16); // radiusTop, radiusBottom, height, radialSegments
+        const playerBody = new THREE.Mesh(bodyGeometry, playerBodyMaterial);
+        playerBody.position.y = 0.5; // Half height, so it sits on y=0 of the group
+        player.add(playerBody);
+
+        // Player Head (Sphere)
+        const headGeometry = new THREE.SphereGeometry(0.25, 16, 16); // radius, widthSegments, heightSegments
+        const playerHead = new THREE.Mesh(headGeometry, playerBodyMaterial); // Can use same material
+        playerHead.position.y = 1.0 + 0.25; // Position on top of the body (body height + head radius)
+        player.add(playerHead);
+
+
+        // Attach camera to player group
+        player.add(camera);
+        camera.position.set(0, 1.2, 0); // Eyes roughly at y=1.2 relative to player group's origin (feet)
 
         // Weapon Definitions
         const weaponTypes = {
@@ -70,7 +87,7 @@
                 name: 'Pistol',
                 color: 0xff0000, // Projectile color
                 fireRate: 500, // milliseconds per shot
-                projectileSpeed: 0.5,
+                projectileSpeed: 0.8, // Increased speed
                 pickupColor: 0xcccccc, // Color of the pickup box
                 damage: 25 // Updated damage
             },
@@ -78,7 +95,7 @@
                 name: 'Machine Gun',
                 color: 0xffff00, // Yellow projectiles
                 fireRate: 100, // Faster fire rate
-                projectileSpeed: 0.7,
+                projectileSpeed: 1.0, // Increased speed
                 pickupColor: 0x00ff00, // Green pickup box
                 damage: 15 // Updated damage
             }
@@ -93,18 +110,18 @@
 
         // Projectile Variables
         const projectiles = [];
-        const projectileGeometry = new THREE.SphereGeometry(0.1, 8, 8); // Global definition
+        const projectileGeometry = new THREE.SphereGeometry(0.15, 8, 8); // Global definition - Increased radius for visibility
         // const projectileMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // REMOVED - will be dynamic
 
         // Weapon Pickup Variables
         const weaponPickups = [];
-        const pickupGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5); // Global definition
-
+        // pickupGeometry will be defined in spawnWeaponPickup based on type
 
         // Enemy Variables
         const enemies = [];
-        const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
-        const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0x0000ff });
+        // Enemy Geometry: Cylinder (radiusTop, radiusBottom, height, radialSegments)
+        const enemyGeometry = new THREE.CylinderGeometry(0.4, 0.4, 1.2, 16);
+        const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red color for enemies
         let lastSpawnTime = 0;
         let spawnInterval = 5000; // milliseconds (5 seconds)
         const maxEnemies = 20;
@@ -114,12 +131,47 @@
         const playerSpeed = 0.1;
         const keyboard = {};
 
-        // Keyboard Event Listeners
+        // Keyboard Event Listeners for Movement
         document.addEventListener('keydown', (event) => {
-            keyboard[event.code] = true; // General key state update
+            keyboard[event.code] = true; // General key state update for movement
+        });
+        document.addEventListener('keyup', (event) => {
+            keyboard[event.code] = false;
+        });
 
-            if (event.code === 'Space') {
-                if (isGameOver) return; // Stop shooting if game over
+        // Mouse Controls (Look and Shoot)
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ'); // To control camera rotation
+        const PI_2 = Math.PI / 2; // For clamping pitch
+
+        function onMouseMove(event) {
+            if (document.pointerLockElement === canvas) {
+                const movementX = event.movementX || 0;
+                const movementY = event.movementY || 0;
+
+                // Rotate player (yaw)
+                player.rotation.y -= movementX * 0.002;
+
+                // Rotate camera (pitch)
+                euler.setFromQuaternion(camera.quaternion);
+                euler.x -= movementY * 0.002;
+                euler.x = Math.max(-PI_2, Math.min(PI_2, euler.x)); // Clamp pitch
+                camera.quaternion.setFromEuler(euler);
+            }
+        }
+
+        document.addEventListener('mousemove', onMouseMove, false);
+
+        // Listener for requesting pointer lock
+        canvas.addEventListener('click', () => {
+            if (document.pointerLockElement !== canvas) {
+                 canvas.requestPointerLock();
+            }
+        });
+
+        // Listener for shooting
+        document.addEventListener('mousedown', (event) => {
+            // Check if pointer is locked, game is not over, and it's the left mouse button (button code 0)
+            if (document.pointerLockElement === canvas && !isGameOver && event.button === 0) {
                 const currentTime = clock.getElapsedTime() * 1000;
                 if (currentTime - lastShotTime < currentPlayerWeapon.fireRate) return;
                 lastShotTime = currentTime;
@@ -128,24 +180,38 @@
                 const projectile = new THREE.Mesh(projectileGeometry, currentProjectileMaterial);
 
                 const direction = new THREE.Vector3();
-                camera.getWorldDirection(direction);
+                camera.getWorldDirection(direction); // Projectiles go where the camera is looking
 
-                projectile.position.copy(player.position).addScaledVector(direction, 1.5); // Spawn 1.5 units in front
+                // Spawn projectile slightly in front of the camera, along its direction
+                const spawnPosition = new THREE.Vector3();
+                camera.getWorldPosition(spawnPosition); // Get camera's world position
+                projectile.position.copy(spawnPosition).addScaledVector(direction, 1.0); // Spawn 1 unit in front of camera
+
                 projectile.velocity = direction.multiplyScalar(currentPlayerWeapon.projectileSpeed);
 
                 projectiles.push(projectile);
                 scene.add(projectile);
             }
         });
-        document.addEventListener('keyup', (event) => {
-            keyboard[event.code] = false;
-        });
+
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement === canvas) {
+                console.log('Pointer Lock active');
+            } else {
+                console.log('Pointer Lock released');
+            }
+        }, false);
+
+        document.addEventListener('pointerlockerror', (event) => {
+            console.error('Pointer Lock Error:', event);
+        }, false);
+
 
         // Enemy Spawning Function
         function spawnEnemy() {
             const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
             enemy.position.x = (Math.random() - 0.5) * 20;
-            enemy.position.y = 0.5;
+            enemy.position.y = 0.6; // Half height of cylinder (1.2 / 2)
             enemy.position.z = (Math.random() - 0.5) * 20 - 10;
             enemy.health = 100; // Enemy health
             enemies.push(enemy);
@@ -154,10 +220,22 @@
 
         // Spawn Weapon Pickup Function
         function spawnWeaponPickup(weaponType) {
+            let specificPickupGeometry;
+            if (weaponType.name === weaponTypes.machineGun.name) {
+                specificPickupGeometry = new THREE.BoxGeometry(0.5, 0.75, 0.5); // Taller box for MG
+            } else { // Default for pistol and potentially others
+                specificPickupGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+            }
+
             const pickupMaterial = new THREE.MeshStandardMaterial({ color: weaponType.pickupColor });
-            const pickupMesh = new THREE.Mesh(pickupGeometry, pickupMaterial);
+            const pickupMesh = new THREE.Mesh(specificPickupGeometry, pickupMaterial);
             pickupMesh.position.x = (Math.random() - 0.5) * 15;
-            pickupMesh.position.y = 0.25;
+            // Adjust Y based on geometry height to sit on ground
+            if (weaponType.name === weaponTypes.machineGun.name) {
+                pickupMesh.position.y = 0.75 / 2;
+            } else {
+                pickupMesh.position.y = 0.5 / 2;
+            }
             pickupMesh.position.z = (Math.random() - 0.5) * 15;
             pickupMesh.weaponType = weaponType;
             scene.add(pickupMesh);
@@ -181,20 +259,36 @@
             requestAnimationFrame(animate);
 
             // Update Player Position
-            if (!isGameOver) { // Check added for movement block
+            if (!isGameOver) {
+                const moveDirection = new THREE.Vector3();
+                const forward = new THREE.Vector3();
+                const right = new THREE.Vector3();
+
+                // Get player's forward direction (ignoring pitch from camera)
+                // Player's rotation.y is the yaw.
+                forward.set(Math.sin(player.rotation.y), 0, Math.cos(player.rotation.y)).normalize();
+                // Calculate right vector ( perpendicular to forward, in XZ plane)
+                right.set(forward.z, 0, -forward.x).normalize();
+
+
                 if (keyboard['ArrowUp'] || keyboard['KeyW']) {
-                    player.position.z -= playerSpeed;
+                    moveDirection.sub(forward); // Move forward along player's facing direction
                 }
                 if (keyboard['ArrowDown'] || keyboard['KeyS']) {
-                    player.position.z += playerSpeed;
+                    moveDirection.add(forward); // Move backward
                 }
                 if (keyboard['ArrowLeft'] || keyboard['KeyA']) {
-                    player.position.x -= playerSpeed;
+                    moveDirection.sub(right); // Strafe left
                 }
                 if (keyboard['ArrowRight'] || keyboard['KeyD']) {
-                   player.position.x += playerSpeed;
-                } // This brace closes the ArrowRight/KeyD if
-            } // THIS IS THE ADDED CLOSING BRACE
+                   moveDirection.add(right); // Strafe right
+                }
+
+                if (moveDirection.lengthSq() > 0) { // If there's any movement input
+                    moveDirection.normalize().multiplyScalar(playerSpeed);
+                    player.position.add(moveDirection);
+                }
+            }
 
             // Update Projectile Positions & Collision Detection
             for (let i = projectiles.length - 1; i >= 0; i--) {
@@ -243,14 +337,23 @@
 
                 // Simple AI: Move towards player
                 const directionToPlayer = new THREE.Vector3().subVectors(player.position, enemy.position);
-                directionToPlayer.y = 0; // Project onto XZ plane
+                // Keep enemy AI movement on the XZ plane, their Y position is fixed.
+                directionToPlayer.y = 0;
                 directionToPlayer.normalize();
 
                 const enemySpeed = 0.01; // Adjust as needed
                 enemy.position.addScaledVector(directionToPlayer, enemySpeed);
-                enemy.position.y = 0.5; // Ensure it stays on the ground
+                // enemy.position.y is set at spawn and collision doesn't change it.
 
-                enemy.rotation.y += 0.01; // Keep spinning for now
+                // Make enemy face the player (optional, simple rotation)
+                // enemy.lookAt(player.position.x, enemy.position.y, player.position.z); // LookAt player XZ
+                // The above lookAt might conflict with existing rotation.y += 0.01 if not handled.
+                // For now, let's keep the spinning or remove it if lookAt is preferred.
+                // Removing spinning for now, as it looks odd with non-symmetrical models.
+                // enemy.rotation.y += 0.01;
+                // Alternative: Make enemy look at player (Y component of player.position should be enemy.position.y for correct lookAt)
+                const lookAtPosition = new THREE.Vector3(player.position.x, enemy.position.y, player.position.z);
+                enemy.lookAt(lookAtPosition);
 
                 // Player-Enemy Collision
                 const distanceToPlayer = player.position.distanceTo(enemy.position);
@@ -293,9 +396,9 @@
                 weaponDisplay.textContent = "Weapon: " + currentPlayerWeapon.name;
             }
 
-            // Adjust Camera to Follow Player
-            camera.position.set(player.position.x, player.position.y + 5, player.position.z + 5);
-            camera.lookAt(player.position);
+            // Camera is now a child of player, so its position and rotation are relative.
+            // No need for manual camera following code here. Player rotation handles Y-axis look.
+            // Camera's own rotation handles X-axis look (pitch).
 
             // Player vs Weapon Pickup Collision
             for (let i = weaponPickups.length - 1; i >= 0; i--) {
@@ -365,7 +468,7 @@
             spawnWeaponPickup(weaponTypes.machineGun); // Ensure this function exists and is correct
 
             // Reset player position
-            player.position.set(0, 0.5, 0);
+            player.position.set(0, 0, 0); // Player group pivot is at feet (y=0)
 
             // Hide game over screen
             gameOverScreen.style.display = 'none';

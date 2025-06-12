@@ -192,8 +192,9 @@
                     player.position.x -= playerSpeed;
                 }
                 if (keyboard['ArrowRight'] || keyboard['KeyD']) {
-                player.position.x += playerSpeed;
-            }
+                   player.position.x += playerSpeed;
+                } // This brace closes the ArrowRight/KeyD if
+            } // THIS IS THE ADDED CLOSING BRACE
 
             // Update Projectile Positions & Collision Detection
             for (let i = projectiles.length - 1; i >= 0; i--) {

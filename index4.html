@@ -132,7 +132,7 @@
 
         // Attach camera to player group
         // player.add(camera); // Decouple camera from player group
-        camera.position.set(0, 2, 5); // Eyes roughly at y=1.2 relative to player group's origin (feet)
+        camera.position.set(0, player.position.y + 2, player.position.z + 5); // Eyes roughly at y=1.2 relative to player group's origin (feet)
         // Initial lookAt will be updated in animate loop, but set a reasonable default
         camera.lookAt(player.position.clone().add(new THREE.Vector3(0, legHeight + torsoHeight / 2, 0)));
 
@@ -148,6 +148,10 @@
         let onGround = true; // To track if player is on a surface
         const keyboard = {};
         let cameraOrbitYaw = 0;
+
+        // Animation State Variables
+        let isMoving = false;
+        const walkAnimationSpeed = 5; // Speed of the walk cycle animation
 
         // Converts a world coordinate to its nearest grid coordinate (center of the grid cell)
         function worldToGrid(worldCoord) {
@@ -281,6 +285,34 @@
             // Update Player Position
             // Update player bounding box
             player.userData.boundingBox.setFromObject(player);
+
+            // Determine if player is moving for animation
+            isMoving = (keyboard['ArrowUp'] || keyboard['KeyW'] ||
+                        keyboard['ArrowDown'] || keyboard['KeyS'] ||
+                        keyboard['ArrowLeft'] || keyboard['KeyA'] ||
+                        keyboard['ArrowRight'] || keyboard['KeyD']);
+
+            const currentWalkTime = clock.getElapsedTime();
+
+            if (isMoving) {
+                const swingAmplitudeLegs = 0.7; // Radians, adjust for desired swing
+                const swingAmplitudeArms = 0.5; // Radians
+
+                leftLeg.rotation.x = Math.sin(currentWalkTime * walkAnimationSpeed) * swingAmplitudeLegs;
+                rightLeg.rotation.x = Math.sin(currentWalkTime * walkAnimationSpeed + Math.PI) * swingAmplitudeLegs;
+
+                // Arms swing opposite to their corresponding leg to mimic natural walking
+                leftArm.rotation.x = Math.sin(currentWalkTime * walkAnimationSpeed + Math.PI) * swingAmplitudeArms;
+                rightArm.rotation.x = Math.sin(currentWalkTime * walkAnimationSpeed) * swingAmplitudeArms;
+
+            } else {
+                // Return to neutral position (X-axis rotation)
+                leftLeg.rotation.x = 0;
+                rightLeg.rotation.x = 0;
+                leftArm.rotation.x = 0; // Assuming neutral X rotation is 0
+                rightArm.rotation.x = 0; // Assuming neutral X rotation is 0
+                // Initial Z-axis arm rotations are preserved by not changing them here
+            }
 
                 const moveDirection = new THREE.Vector3();
                 const forward = new THREE.Vector3();
@@ -517,11 +549,32 @@
             // Note: camera.quaternion is updated in onMouseMove based on euler angles
             const rotatedOffset = desiredOffset.clone().applyQuaternion(camera.quaternion);
 
-            // Set the camera's position
-            camera.position.copy(targetPosition).add(rotatedOffset);
-
             // Ensure camera looks at the target position (e.g., player's head area)
             camera.lookAt(targetPosition);
+
+            // Camera positioning logic
+            const lookAtPosition = player.position.clone().add(new THREE.Vector3(0, legHeight + torsoHeight / 2, 0)); // Player's center mass
+
+            // Calculate desired offset from the player (e.g., behind and slightly above)
+            const baseOffset = new THREE.Vector3(0, 1.5, 4); // (x, y, z offset from target) - y is height, z is distance
+
+            // Create a quaternion for the orbit yaw (horizontal)
+            const yawQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), cameraOrbitYaw);
+
+            // Create a quaternion for the pitch (vertical)
+            const pitchQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), euler.x);
+
+            // Combine yaw and pitch rotations. Order matters: yaw first, then pitch relative to yawed orientation.
+            const combinedQuaternion = new THREE.Quaternion().multiplyQuaternions(yawQuaternion, pitchQuaternion);
+
+            // Apply the combined rotation to the base offset vector
+            const rotatedOffset = baseOffset.clone().applyQuaternion(combinedQuaternion);
+
+            // Set the camera's position: player's look-at point + rotated offset
+            camera.position.copy(lookAtPosition).add(rotatedOffset);
+
+            // Ensure camera looks at the player's look-at point
+            camera.lookAt(lookAtPosition);
 
             renderer.render(scene, camera);
         }

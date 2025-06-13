@@ -567,8 +567,8 @@
                 if (oldVisibility !== previewBlock.visible) {
                     console.log("previewBlock.visible changed from", oldVisibility, "to", previewBlock.visible, "(no intersection)");
                 }
-                mouseHasMoved = false; // Reset the flag after updating
             }
+            mouseHasMoved = false; // CORRECT PLACEMENT: Reset flag after all conditional logic for preview block
 
             // Camera positioning logic
             // Player's head position or a point slightly above the player's main position

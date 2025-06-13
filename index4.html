@@ -102,8 +102,9 @@
         player.add(playerHead);
 
         // Attach camera to player group
-        player.add(camera);
+        // player.add(camera); // Decouple camera from player group
         camera.position.set(0, 2, 5); // Eyes roughly at y=1.2 relative to player group's origin (feet)
+        camera.lookAt(player.position.clone().add(new THREE.Vector3(0, 1.0, 0))); // Initial lookAt
 
         // Player Movement Variables
         const playerSpeed = 0.1;
@@ -178,11 +179,20 @@
                 euler.y = cameraOrbitYaw;
                 camera.quaternion.setFromEuler(euler);
 
-                const offset = new THREE.Vector3(0, 0, 5); // Distance from player
-                offset.applyQuaternion(camera.quaternion); // Rotate offset by camera's new orientation
-                camera.position.copy(player.position).add(offset);
-                camera.position.y += 2; // Elevate camera a bit more consistently
-                camera.lookAt(player.position.clone().add(new THREE.Vector3(0, 1, 0))); // Look at player's head area.
+                // Player's head position or a point slightly above the player's main position
+                const targetPosition = player.position.clone().add(new THREE.Vector3(0, 1.0, 0)); // Adjust Y offset as needed for what to look at
+
+                // Calculate desired offset from the player (e.g., behind and slightly above)
+                const desiredOffset = new THREE.Vector3(0, 1.5, 5); // (x, y, z offset from target) - y is height, z is distance
+
+                // Rotate this offset by the camera's current quaternion (which includes mouse look)
+                const rotatedOffset = desiredOffset.clone().applyQuaternion(camera.quaternion);
+
+                // Set the camera's position
+                camera.position.copy(targetPosition).add(rotatedOffset);
+
+                // Ensure camera looks at the target position (e.g., player's head area)
+                camera.lookAt(targetPosition);
             }
         }
 
@@ -276,7 +286,7 @@
                     moveDirection.sub(forward); // Move backward
                 }
                 if (keyboard['ArrowLeft'] || keyboard['KeyA']) {
-                    moveDirection.sub(right); // Strafe left
+                    moveDirection.add(right); // Strafe left
                 }
                 if (keyboard['ArrowRight'] || keyboard['KeyD']) {
                    moveDirection.sub(right); // Strafe right

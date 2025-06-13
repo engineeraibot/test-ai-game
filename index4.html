@@ -545,13 +545,6 @@
             // Calculate desired offset from the player (e.g., behind and slightly above)
             const desiredOffset = new THREE.Vector3(0, 1.5, 5); // (x, y, z offset from target) - y is height, z is distance
 
-            // Rotate this offset by the camera's current quaternion (which includes mouse look)
-            // Note: camera.quaternion is updated in onMouseMove based on euler angles
-            const rotatedOffset = desiredOffset.clone().applyQuaternion(camera.quaternion);
-
-            // Ensure camera looks at the target position (e.g., player's head area)
-            camera.lookAt(targetPosition);
-
             // Camera positioning logic
             const lookAtPosition = player.position.clone().add(new THREE.Vector3(0, legHeight + torsoHeight / 2, 0)); // Player's center mass
 

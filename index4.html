@@ -103,7 +103,7 @@
 
         // Attach camera to player group
         player.add(camera);
-        camera.position.set(0, 1.2, 0); // Eyes roughly at y=1.2 relative to player group's origin (feet)
+        camera.position.set(0, 2, 5); // Eyes roughly at y=1.2 relative to player group's origin (feet)
 
         // Player Movement Variables
         const playerSpeed = 0.1;
@@ -115,6 +115,7 @@
         const jumpStrength = 0.3; // Adjust as needed for jump height
         let onGround = true; // To track if player is on a surface
         const keyboard = {};
+        let cameraOrbitYaw = 0;
 
         // Converts a world coordinate to its nearest grid coordinate (center of the grid cell)
         function worldToGrid(worldCoord) {
@@ -171,14 +172,17 @@
                 const movementX = event.movementX || 0;
                 const movementY = event.movementY || 0;
 
-                // Rotate player (yaw)
-                player.rotation.y -= movementX * 0.002;
-
-                // Rotate camera (pitch)
-                euler.setFromQuaternion(camera.quaternion);
+                cameraOrbitYaw -= movementX * 0.002;
                 euler.x -= movementY * 0.002;
                 euler.x = Math.max(-PI_2, Math.min(PI_2, euler.x)); // Clamp pitch
+                euler.y = cameraOrbitYaw;
                 camera.quaternion.setFromEuler(euler);
+
+                const offset = new THREE.Vector3(0, 0, 5); // Distance from player
+                offset.applyQuaternion(camera.quaternion); // Rotate offset by camera's new orientation
+                camera.position.copy(player.position).add(offset);
+                camera.position.y += 2; // Elevate camera a bit more consistently
+                camera.lookAt(player.position.clone().add(new THREE.Vector3(0, 1, 0))); // Look at player's head area.
             }
         }
 
@@ -266,16 +270,16 @@
 
 
                 if (keyboard['ArrowUp'] || keyboard['KeyW']) {
-                    moveDirection.sub(forward); // Move forward along player's facing direction
+                    moveDirection.add(forward); // Move forward along player's facing direction
                 }
                 if (keyboard['ArrowDown'] || keyboard['KeyS']) {
-                    moveDirection.add(forward); // Move backward
+                    moveDirection.sub(forward); // Move backward
                 }
                 if (keyboard['ArrowLeft'] || keyboard['KeyA']) {
                     moveDirection.sub(right); // Strafe left
                 }
                 if (keyboard['ArrowRight'] || keyboard['KeyD']) {
-                   moveDirection.add(right); // Strafe right
+                   moveDirection.sub(right); // Strafe right
                 }
 
                 // --- XZ-AXIS MOVEMENT AND COLLISION ---
@@ -402,10 +406,6 @@
                     }
                 }
                 // --- END Y-AXIS MOVEMENT ---
-
-            // Camera is now a child of player, so its position and rotation are relative.
-            // No need for manual camera following code here. Player rotation handles Y-axis look.
-            // Camera's own rotation handles X-axis look (pitch).
 
             // Update Preview Block Position
             const lookDirection = new THREE.Vector3();

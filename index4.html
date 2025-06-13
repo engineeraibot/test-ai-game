@@ -90,18 +90,27 @@
         const playerBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 }); // Green
 
         // Player dimensions
-        const legHeight = 0.6;
+        const legHeight = 0.6; // Keep this, it's used for body and head positioning too
         const torsoHeight = 0.6;
         const headRadius = 0.25;
 
+        // New dimensions for arms and legs
+        const legWidth = 0.25;
+        const legDepth = 0.25;
+        // legHeight is already defined above
+
+        const armWidth = 0.2;
+        const armDepth = 0.2;
+        const armLength = 0.6; // New variable for arm length
+
         // Player Legs
-        const legGeometry = new THREE.CylinderGeometry(0.15, 0.15, legHeight, 6);
+        const legGeometry = new THREE.BoxGeometry(legWidth, legHeight, legDepth); // Changed from Cylinder
         const leftLeg = new THREE.Mesh(legGeometry, playerBodyMaterial);
-        leftLeg.position.set(-0.15, legHeight / 2, 0);
+        leftLeg.position.set(-0.15, legHeight / 2, 0); // Position remains the same
         player.add(leftLeg);
 
         const rightLeg = new THREE.Mesh(legGeometry, playerBodyMaterial);
-        rightLeg.position.set(0.15, legHeight / 2, 0);
+        rightLeg.position.set(0.15, legHeight / 2, 0); // Position remains the same
         player.add(rightLeg);
 
         // Player Body (Cylinder - low-poly)
@@ -117,17 +126,19 @@
         player.add(playerHead);
 
         // Player Arms
-        const armGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.75, 6); // radiusTop, radiusBottom, height, radialSegments
+        const armGeometry = new THREE.BoxGeometry(armWidth, armLength, armDepth); // Changed from Cylinder
         const leftArm = new THREE.Mesh(armGeometry, playerBodyMaterial);
-        leftArm.position.x = -0.45; // To the side of the body
-        leftArm.position.y = legHeight + torsoHeight * 0.7;   // Roughly shoulder height on new torso
-        leftArm.rotation.z = Math.PI / 8; // Angled slightly downwards
+        // Adjust position for BoxGeometry, considering armLength and attachment to torso side
+        leftArm.position.x = -(0.3 + armWidth / 2); // torsoRadius (0.3) + half armWidth
+        leftArm.position.y = legHeight + torsoHeight - (armLength / 2) - 0.05; // Top of torso, down by half arm length, slight adjustment
+        leftArm.rotation.z = Math.PI / 8; // Angled slightly downwards (can be adjusted)
         player.add(leftArm);
 
         const rightArm = new THREE.Mesh(armGeometry, playerBodyMaterial);
-        rightArm.position.x = 0.45;  // To the side of the body
-        rightArm.position.y = legHeight + torsoHeight * 0.7;   // Roughly shoulder height on new torso
-        rightArm.rotation.z = -Math.PI / 8; // Angled slightly downwards
+        // Adjust position for BoxGeometry
+        rightArm.position.x = 0.3 + armWidth / 2; // torsoRadius (0.3) + half armWidth
+        rightArm.position.y = legHeight + torsoHeight - (armLength / 2) - 0.05; // Same Y as left arm
+        rightArm.rotation.z = -Math.PI / 8; // Angled slightly downwards (can be adjusted)
         player.add(rightArm);
 
         // Attach camera to player group
@@ -468,7 +479,9 @@
             // Update Preview Block Position
             const lookDirection = new THREE.Vector3();
             camera.getWorldDirection(lookDirection);
-            raycaster.set(camera.getWorldPosition(new THREE.Vector3()), lookDirection);
+            const rayOrigin = camera.getWorldPosition(new THREE.Vector3());
+            raycaster.set(rayOrigin, lookDirection);
+            console.log("Raycaster origin:", rayOrigin, "direction:", lookDirection);
 
             // Objects to intersect: groundPlane and placedBlocks meshes
             // We need to get the actual mesh objects from placedBlocks
@@ -476,11 +489,13 @@
             const intersectableObjects = [groundPlane, ...blockMeshes]; // groundPlane must be defined
 
             const intersects = raycaster.intersectObjects(intersectableObjects, false); // non-recursive
+            console.log("Intersects.length > 0:", intersects.length > 0);
 
             if (intersects.length > 0) {
                 const intersection = intersects[0];
                 const point = intersection.point;
                 const normal = intersection.face.normal;
+                console.log("Intersection point:", point, "normal:", normal);
 
                 // Calculate position for the new block: move half a block away from the intersection point, in the direction of the normal
                 // This places the new block ON TOP of the intersected face.
@@ -519,6 +534,7 @@
                     .add(new THREE.Vector3().copy(intersection.face.normal).multiplyScalar(blockSize * 0.01)); // Move slightly into the adjacent cell
 
                 const finalPreviewPos = worldVecToGridVec(potentialPosition);
+                console.log("Calculated finalPreviewPos:", finalPreviewPos);
 
                 // Ensure Y is at least half block size if placing on flat ground from above
                 if (intersection.object === groundPlane && normal.y > 0.9) { // Hit top of ground plane
@@ -527,15 +543,26 @@
 
                 // Check if this cell is already occupied (more robust check needed later if complex shapes)
                 const gridCell = getGridCell(finalPreviewPos);
-                if (!isBlockAtGridCell(gridCell.x, gridCell.y, gridCell.z)) {
+                const isOccupied = isBlockAtGridCell(gridCell.x, gridCell.y, gridCell.z);
+                console.log(`isBlockAtGridCell(${gridCell.x}, ${gridCell.y}, ${gridCell.z}):`, isOccupied);
+
+                const oldVisibility = previewBlock.visible;
+                if (!isOccupied) {
                     previewBlock.position.copy(finalPreviewPos);
                     previewBlock.visible = true;
                 } else {
                     previewBlock.visible = false; // Can't place here
                 }
+                if (oldVisibility !== previewBlock.visible) {
+                    console.log("previewBlock.visible changed from", oldVisibility, "to", previewBlock.visible);
+                }
 
             } else {
+                const oldVisibility = previewBlock.visible;
                 previewBlock.visible = false; // No valid intersection
+                if (oldVisibility !== previewBlock.visible) {
+                    console.log("previewBlock.visible changed from", oldVisibility, "to", previewBlock.visible, "(no intersection)");
+                }
             }
 
             // Camera positioning logic

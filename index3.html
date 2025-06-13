@@ -43,6 +43,7 @@
 
         // 3. Create a Scene
         const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // Sky-blue background
         const clock = new THREE.Clock(); // Clock for timed events
 
         // 4. Create a PerspectiveCamera
@@ -53,9 +54,17 @@
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
         scene.add(ambientLight);
 
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0); // Increased intensity
         directionalLight.position.set(0, 1, 0);
         scene.add(directionalLight);
+
+        // Create Ground Plane
+        const groundGeometry = new THREE.PlaneGeometry(100, 100);
+        const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x4CAF50, side: THREE.DoubleSide });
+        const groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
+        groundPlane.position.y = 0; // Position at y = 0
+        groundPlane.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+        scene.add(groundPlane);
 
         // Create Player Group (acting as the player)
         const player = new THREE.Group();
@@ -64,18 +73,24 @@
 
         const playerBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 }); // Green
 
-        // Player Body (Cylinder)
-        const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.0, 16); // radiusTop, radiusBottom, height, radialSegments
+        // Player Body (Cylinder - low-poly)
+        const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.0, 8); // radiusTop, radiusBottom, height, radialSegments
         const playerBody = new THREE.Mesh(bodyGeometry, playerBodyMaterial);
-        playerBody.position.y = 0.5; // Half height, so it sits on y=0 of the group
+        playerBody.position.y = 0.5; // Half height, so bottom is at y=0 of the group
         player.add(playerBody);
 
-        // Player Head (Sphere)
-        const headGeometry = new THREE.SphereGeometry(0.25, 16, 16); // radius, widthSegments, heightSegments
+        // Player Head (Sphere - low-poly)
+        const headGeometry = new THREE.SphereGeometry(0.25, 8, 8); // radius, widthSegments, heightSegments
         const playerHead = new THREE.Mesh(headGeometry, playerBodyMaterial); // Can use same material
         playerHead.position.y = 1.0 + 0.25; // Position on top of the body (body height + head radius)
         player.add(playerHead);
 
+        // Held Weapon Representation
+        const heldWeaponGeo = new THREE.BoxGeometry(0.1, 0.1, 0.4);
+        const heldWeaponMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+        player.userData.heldWeaponMesh = new THREE.Mesh(heldWeaponGeo, heldWeaponMat);
+        player.userData.heldWeaponMesh.position.set(0.35, 0.5, 0.3); // Position in "hand"
+        player.add(player.userData.heldWeaponMesh);
 
         // Attach camera to player group
         player.add(camera);
@@ -110,7 +125,7 @@
 
         // Projectile Variables
         const projectiles = [];
-        const projectileGeometry = new THREE.SphereGeometry(0.15, 8, 8); // Global definition - Increased radius for visibility
+        const projectileGeometry = new THREE.SphereGeometry(0.05, 8, 8); // Global definition - Reduced radius for smaller bullets
         // const projectileMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // REMOVED - will be dynamic
 
         // Weapon Pickup Variables
@@ -119,8 +134,8 @@
 
         // Enemy Variables
         const enemies = [];
-        // Enemy Geometry: Cylinder (radiusTop, radiusBottom, height, radialSegments)
-        const enemyGeometry = new THREE.CylinderGeometry(0.4, 0.4, 1.2, 16);
+        // Enemy Geometry: Cylinder (radiusTop, radiusBottom, height, radialSegments) - REPLACED
+        // const enemyGeometry = new THREE.CylinderGeometry(0.4, 0.4, 1.2, 16);
         const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red color for enemies
         let lastSpawnTime = 0;
         let spawnInterval = 5000; // milliseconds (5 seconds)
@@ -178,6 +193,7 @@
 
                 const currentProjectileMaterial = new THREE.MeshStandardMaterial({ color: currentPlayerWeapon.color });
                 const projectile = new THREE.Mesh(projectileGeometry, currentProjectileMaterial);
+                projectile.userData.boundingBox = new THREE.Box3().setFromObject(projectile); // Initialize bounding box
 
                 const direction = new THREE.Vector3();
                 camera.getWorldDirection(direction); // Projectiles go where the camera is looking
@@ -185,7 +201,7 @@
                 // Spawn projectile slightly in front of the camera, along its direction
                 const spawnPosition = new THREE.Vector3();
                 camera.getWorldPosition(spawnPosition); // Get camera's world position
-                projectile.position.copy(spawnPosition).addScaledVector(direction, 1.0); // Spawn 1 unit in front of camera
+                projectile.position.copy(spawnPosition).addScaledVector(direction, 1.5); // Spawn 1.5 units in front of camera
 
                 projectile.velocity = direction.multiplyScalar(currentPlayerWeapon.projectileSpeed);
 
@@ -209,37 +225,96 @@
 
         // Enemy Spawning Function
         function spawnEnemy() {
-            const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
+            const enemy = new THREE.Group(); // Enemies are now groups
             enemy.position.x = (Math.random() - 0.5) * 20;
-            enemy.position.y = 0.6; // Half height of cylinder (1.2 / 2)
+            enemy.position.y = 0; // Base of the enemy group is on the ground
             enemy.position.z = (Math.random() - 0.5) * 20 - 10;
+
+            const lowerBodyHeight = 0.7;
+            const upperBodyHeight = 0.5;
+
+            // Lower Body
+            const lowerBodyGeo = new THREE.BoxGeometry(0.5, lowerBodyHeight, 0.5);
+            const lowerBodyMesh = new THREE.Mesh(lowerBodyGeo, enemyMaterial);
+            lowerBodyMesh.position.y = lowerBodyHeight / 2;
+            enemy.add(lowerBodyMesh);
+
+            // Upper Body / Head
+            const upperBodyGeo = new THREE.BoxGeometry(0.4, upperBodyHeight, 0.4);
+            const upperBodyMesh = new THREE.Mesh(upperBodyGeo, enemyMaterial);
+            upperBodyMesh.position.y = lowerBodyHeight + (upperBodyHeight / 2);
+            enemy.add(upperBodyMesh);
+
             enemy.health = 100; // Enemy health
+            enemy.userData.boundingBox = new THREE.Box3().setFromObject(enemy); // Initialize bounding box
             enemies.push(enemy);
             scene.add(enemy);
         }
 
         // Spawn Weapon Pickup Function
         function spawnWeaponPickup(weaponType) {
-            let specificPickupGeometry;
-            if (weaponType.name === weaponTypes.machineGun.name) {
-                specificPickupGeometry = new THREE.BoxGeometry(0.5, 0.75, 0.5); // Taller box for MG
-            } else { // Default for pistol and potentially others
-                specificPickupGeometry = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-            }
-
             const pickupMaterial = new THREE.MeshStandardMaterial({ color: weaponType.pickupColor });
-            const pickupMesh = new THREE.Mesh(specificPickupGeometry, pickupMaterial);
+            const pickupGroup = new THREE.Group();
+
+            // Define geometries for a generic gun shape
+            const barrelGeo = new THREE.BoxGeometry(0.1, 0.1, 0.6);
+            const handleGeo = new THREE.BoxGeometry(0.15, 0.25, 0.15);
+
+            const barrelMesh = new THREE.Mesh(barrelGeo, pickupMaterial);
+            barrelMesh.position.z = 0.2; // Position barrel forward
+            pickupGroup.add(barrelMesh);
+
+            const handleMesh = new THREE.Mesh(handleGeo, pickupMaterial);
+            handleMesh.position.y = -0.05; // Position handle slightly down
+            pickupGroup.add(handleMesh);
+
+            const pickupMesh = pickupGroup; // Use the group as the main pickup object
+
             pickupMesh.position.x = (Math.random() - 0.5) * 15;
-            // Adjust Y based on geometry height to sit on ground
-            if (weaponType.name === weaponTypes.machineGun.name) {
-                pickupMesh.position.y = 0.75 / 2;
-            } else {
-                pickupMesh.position.y = 0.5 / 2;
-            }
+            pickupMesh.position.y = 0.125; // Fixed Y position for the gun model to sit on ground
             pickupMesh.position.z = (Math.random() - 0.5) * 15;
+
             pickupMesh.weaponType = weaponType;
+            pickupMesh.userData.boundingBox = new THREE.Box3().setFromObject(pickupMesh); // Initialize bounding box
+
             scene.add(pickupMesh);
             weaponPickups.push(pickupMesh);
+        }
+
+        // Tree Spawning Function
+        function spawnTree(x, z) {
+            const tree = new THREE.Group();
+
+            const trunkHeight = 1.5;
+            const trunkGeo = new THREE.CylinderGeometry(0.2, 0.3, trunkHeight, 8);
+            const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 }); // Brown
+            const trunkMesh = new THREE.Mesh(trunkGeo, trunkMat);
+            trunkMesh.position.y = trunkHeight / 2;
+            tree.add(trunkMesh);
+
+            const leavesHeight = 1.0; // Using Cone for leaves
+            const leavesGeo = new THREE.ConeGeometry(0.7, leavesHeight, 8);
+            const leavesMat = new THREE.MeshStandardMaterial({ color: 0x228B22 }); // Forest Green
+            const leavesMesh = new THREE.Mesh(leavesGeo, leavesMat);
+            leavesMesh.position.y = trunkHeight + leavesHeight / 2;
+            tree.add(leavesMesh);
+
+            tree.position.set(x, 0, z); // Base of the tree trunk on the ground
+            scene.add(tree);
+            // Future: Could add tree.userData.boundingBox if trees need interaction
+        }
+
+        // Rock Spawning Function
+        function spawnRock(x, z) {
+            const rockSize = Math.random() * 0.3 + 0.3; // Random size between 0.3 and 0.6
+            // Using Icosahedron for a jagged look, can also use Dodecahedron or scaled Box
+            const rockGeo = new THREE.IcosahedronGeometry(rockSize, 0);
+            const rockMat = new THREE.MeshStandardMaterial({ color: 0x808080 }); // Grey
+            const rockMesh = new THREE.Mesh(rockGeo, rockMat);
+
+            rockMesh.position.set(x, rockSize / 2, z); // Bottom of the rock on the ground
+            scene.add(rockMesh);
+            // Future: Could add rockMesh.userData.boundingBox if rocks need interaction
         }
 
         // Initial Enemy Spawning
@@ -248,6 +323,22 @@
         }
         // Initial Weapon Pickup Spawning
         spawnWeaponPickup(weaponTypes.machineGun);
+
+        // Initial Environment Spawning
+        for (let i = 0; i < 10; i++) {
+            const x = (Math.random() - 0.5) * 90; // Spread across ground plane
+            const z = (Math.random() - 0.5) * 90;
+            if (x*x + z*z > 25) { // Avoid spawning too close to player start (0,0)
+                 spawnTree(x, z);
+            }
+        }
+        for (let i = 0; i < 15; i++) {
+            const x = (Math.random() - 0.5) * 90;
+            const z = (Math.random() - 0.5) * 90;
+            if (x*x + z*z > 16) { // Avoid spawning too close to player start (0,0)
+                spawnRock(x, z);
+            }
+        }
 
 
         // 6. Create a simple render loop
@@ -260,6 +351,12 @@
 
             // Update Player Position
             if (!isGameOver) {
+                // Update player bounding box
+                if (!player.userData.boundingBox) {
+                    player.userData.boundingBox = new THREE.Box3();
+                }
+                player.userData.boundingBox.setFromObject(player);
+
                 const moveDirection = new THREE.Vector3();
                 const forward = new THREE.Vector3();
                 const right = new THREE.Vector3();
@@ -294,19 +391,20 @@
             for (let i = projectiles.length - 1; i >= 0; i--) {
                 const p = projectiles[i];
                 p.position.add(p.velocity);
+                p.userData.boundingBox.setFromObject(p); // Update projectile bounding box after moving
 
-                let projectileRemoved = false; // Flag to check if projectile was removed by collision
+                let projectileRemoved = false;
 
                 for (let j = enemies.length - 1; j >= 0; j--) {
                     const enemy = enemies[j];
+                    enemy.userData.boundingBox.setFromObject(enemy); // Update enemy bounding box
 
-                    const distance = p.position.distanceTo(enemy.position);
-                    if (distance < 1) { // Projectile hits enemy
+                    if (p.userData.boundingBox.intersectsBox(enemy.userData.boundingBox)) { // Projectile hits enemy
                         scene.remove(p);
                         if (p.geometry) p.geometry.dispose();
                         if (p.material) p.material.dispose();
                         projectiles.splice(i, 1);
-                        projectileRemoved = true; // Use the existing flag name 'projectileRemoved'
+                        projectileRemoved = true;
 
                         enemy.health -= currentPlayerWeapon.damage;
                         console.log("Enemy hit, health: " + enemy.health + ", Weapon Damage: " + currentPlayerWeapon.damage);
@@ -319,7 +417,7 @@
                             score += 100; // Add score
                             console.log("Enemy destroyed! Score: " + score);
                         }
-                        break; // Projectile hits one enemy
+                        break;
                     }
                 }
 
@@ -345,19 +443,17 @@
                 enemy.position.addScaledVector(directionToPlayer, enemySpeed);
                 // enemy.position.y is set at spawn and collision doesn't change it.
 
+                // Update enemy bounding box after moving and before lookAt/collision
+                enemy.userData.boundingBox.setFromObject(enemy);
+
                 // Make enemy face the player (optional, simple rotation)
-                // enemy.lookAt(player.position.x, enemy.position.y, player.position.z); // LookAt player XZ
-                // The above lookAt might conflict with existing rotation.y += 0.01 if not handled.
-                // For now, let's keep the spinning or remove it if lookAt is preferred.
-                // Removing spinning for now, as it looks odd with non-symmetrical models.
-                // enemy.rotation.y += 0.01;
-                // Alternative: Make enemy look at player (Y component of player.position should be enemy.position.y for correct lookAt)
                 const lookAtPosition = new THREE.Vector3(player.position.x, enemy.position.y, player.position.z);
                 enemy.lookAt(lookAtPosition);
 
                 // Player-Enemy Collision
-                const distanceToPlayer = player.position.distanceTo(enemy.position);
-                if (distanceToPlayer < 1.0 && !isGameOver) { // Check !isGameOver here too
+                // Player's bounding box is updated at the start of animate loop.
+                // Enemy's bounding box is updated above, after its movement.
+                if (player.userData.boundingBox.intersectsBox(enemy.userData.boundingBox) && !isGameOver) {
                     playerHealth -= 10;
                     console.log("Player hit by enemy! Health: " + playerHealth);
 
@@ -403,13 +499,36 @@
             // Player vs Weapon Pickup Collision
             for (let i = weaponPickups.length - 1; i >= 0; i--) {
                 const pickup = weaponPickups[i];
-                const distance = player.position.distanceTo(pickup.position);
-                if (distance < 1) { // Player close enough to pickup
+                // Update pickup's bounding box (good practice, though they are static for now)
+                // Ensure boundingBox was initialized at spawn
+                if (pickup.userData.boundingBox) {
+                    pickup.userData.boundingBox.setFromObject(pickup);
+                } else {
+                    // Fallback or error if boundingBox wasn't initialized
+                    console.warn("Weapon pickup missing boundingBox:", pickup);
+                    // As a simple fallback for this case, we could use distance check,
+                    // or skip collision, or initialize it here (less ideal).
+                    // For now, let's assume it was initialized.
+                }
+
+                if (player.userData.boundingBox && pickup.userData.boundingBox &&
+                    player.userData.boundingBox.intersectsBox(pickup.userData.boundingBox)) {
                     currentPlayerWeapon = pickup.weaponType;
                     console.log("Picked up " + currentPlayerWeapon.name);
-                    scene.remove(pickup);
-                    if (pickup.geometry) pickup.geometry.dispose();
+
+                    // Proper disposal for groups: remove children and their geometries/materials
+                    while(pickup.children.length > 0){
+                        const child = pickup.children[0];
+                        pickup.remove(child); // Remove child from group
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) child.material.dispose();
+                    }
+                    // If the pickup itself had a material (e.g. if it wasn't a group before)
                     if (pickup.material) pickup.material.dispose();
+                    // If the pickup itself had a geometry (e.g. if it wasn't a group before)
+                    if (pickup.geometry) pickup.geometry.dispose();
+
+                    scene.remove(pickup); // Remove the group itself from the scene
                     weaponPickups.splice(i, 1);
                 }
             }

@@ -201,23 +201,29 @@
             'ArrowUp': false,
             'ArrowDown': false,
             'ArrowLeft': false,
-            'ArrowRight': false
+            'ArrowRight': false,
+            'a': false,
+            'd': false
         };
 
         document.addEventListener('keydown', (event) => {
-            if (keysPressed.hasOwnProperty(event.key)) {
-                keysPressed[event.key] = true;
+            const key = event.key.toLowerCase();
+            if (keysPressed.hasOwnProperty(key)) {
+                keysPressed[key] = true;
             }
         });
 
         document.addEventListener('keyup', (event) => {
-            if (keysPressed.hasOwnProperty(event.key)) {
-                keysPressed[event.key] = false;
+            const key = event.key.toLowerCase();
+            if (keysPressed.hasOwnProperty(key)) {
+                keysPressed[key] = false;
             }
         });
 
         function animate() {
             requestAnimationFrame(animate);
+
+            const cameraLerpFactor = 0.1; // Adjust this value for more or less smoothing
 
             if (car) {
                 const previousPosition = car.position.clone();
@@ -226,10 +232,10 @@
                 const currentSpeed = keysPressed['ArrowUp'] ? moveSpeed : (keysPressed['ArrowDown'] ? -moveSpeed / 2 : 0);
 
                 if (currentSpeed !== 0) {
-                    if (keysPressed['ArrowLeft']) {
+                    if (keysPressed['ArrowLeft'] || keysPressed['a']) { // Turn left
                         car.rotation.y += rotationSpeed;
                     }
-                    if (keysPressed['ArrowRight']) {
+                    if (keysPressed['ArrowRight'] || keysPressed['d']) { // Turn right
                         car.rotation.y -= rotationSpeed;
                     }
                 }
@@ -264,10 +270,15 @@
                 }
 
                 // Camera follow logic
-                const cameraOffset = new THREE.Vector3(0, 5, 12);
-                const cameraPosition = cameraOffset.applyMatrix4(car.matrixWorld);
-                camera.position.copy(cameraPosition);
-                camera.lookAt(car.position);
+                const cameraOffset = new THREE.Vector3(0, 5, 12); // Base offset
+                const targetCameraPosition = new THREE.Vector3(); // Create a vector to store the target position
+                targetCameraPosition.copy(cameraOffset); // Start with the base offset
+                targetCameraPosition.applyMatrix4(car.matrixWorld); // Transform it by the car's world matrix
+
+                // Lerp the camera's current position towards the target position
+                camera.position.lerp(targetCameraPosition, cameraLerpFactor);
+
+                camera.lookAt(car.position); // Keep looking at the car
             }
 
             renderer.render(scene, camera);

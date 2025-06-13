@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft-like Game</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Game logic will go here
+        console.log("Game logic script loaded.");
+
+        const blockSize = 1.0; // Each block is 1x1x1 units
+        const placedBlocks = []; // Array to store {x, y, z, type} of placed blocks
+        // For now, 'type' can be a placeholder, e.g., 'default'
+        const placedBlockMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 }); // A brownish color, like wood or dirt
+
+        // 1. Get the canvas element
+        const canvas = document.getElementById('gameCanvas');
+
+        // 2. Create a WebGLRenderer
+        const renderer = new THREE.WebGLRenderer({ canvas });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+
+        // 3. Create a Scene
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // Sky-blue background
+        const clock = new THREE.Clock(); // Clock for timed events
+
+        // 4. Create a PerspectiveCamera
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        // Camera will be parented to player
+
+        // 5. Add basic lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0); // Increased intensity
+        directionalLight.position.set(0, 1, 0);
+        scene.add(directionalLight);
+
+        // Preview Block for placement
+        const previewBlockGeometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+        const previewBlockMaterial = new THREE.MeshBasicMaterial({
+            color: 0x00ff00,
+            transparent: true,
+            opacity: 0.5,
+            // wireframe: true // Alternative style
+        });
+        const previewBlock = new THREE.Mesh(previewBlockGeometry, previewBlockMaterial);
+        previewBlock.visible = false; // Initially hidden
+        scene.add(previewBlock);
+
+        // Create Ground Plane with segments for terrain
+        const groundGeometry = new THREE.PlaneGeometry(100, 100, 20, 20); // Added segments
+        // const vertices = groundGeometry.attributes.position; // REMOVE
+        // for (let i = 0; i < vertices.count; i++) { // REMOVE
+        //     const x = vertices.getX(i); // REMOVE
+        //     const y = vertices.getY(i); // REMOVE
+        //     vertices.setZ(i, (Math.random() - 0.5) * 2); // REMOVE
+        // } // REMOVE
+        // groundGeometry.computeVertexNormals(); // This can remain or be removed if not needed for flat plane
+
+        const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x4CAF50, side: THREE.DoubleSide });
+        const groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
+        // groundPlane.position.y = 0; // Y position will be inherent from vertex modification if centered.
+        groundPlane.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+        scene.add(groundPlane);
+
+        // Raycaster for terrain height calculation
+        const raycaster = new THREE.Raycaster();
+
+        function getTerrainHeight(worldX, worldZ) {
+            // For a flat ground plane at y=0
+            return 0;
+            /*
+            // Original raycasting logic - keep commented out or remove if only flat ground is desired
+            if (!groundPlane) return 0;
+            const rayOrigin = new THREE.Vector3(worldX, 50, worldZ);
+            const rayDirection = new THREE.Vector3(0, -1, 0);
+            raycaster.set(rayOrigin, rayDirection);
+            const intersects = raycaster.intersectObject(groundPlane, false);
+            if (intersects.length > 0) {
+                return intersects[0].point.y;
+            }
+            return 0;
+            */
+        }
+
+        // Create Player Group (acting as the player)
+        const player = new THREE.Group();
+        player.position.set(0, getTerrainHeight(0, 0), 0); // Set initial Y based on terrain
+        scene.add(player);
+
+        const playerBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 }); // Green
+
+        // Player Body (Cylinder - low-poly)
+        const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.0, 8); // radiusTop, radiusBottom, height, radialSegments
+        const playerBody = new THREE.Mesh(bodyGeometry, playerBodyMaterial);
+        playerBody.position.y = 0.5; // Half height, so bottom is at y=0 of the group
+        player.add(playerBody);
+
+        // Player Head (Sphere - low-poly)
+        const headGeometry = new THREE.SphereGeometry(0.25, 8, 8); // radius, widthSegments, heightSegments
+        const playerHead = new THREE.Mesh(headGeometry, playerBodyMaterial); // Can use same material
+        playerHead.position.y = 1.0 + 0.25; // Position on top of the body (body height + head radius)
+        player.add(playerHead);
+
+        // Attach camera to player group
+        player.add(camera);
+        camera.position.set(0, 1.2, 0); // Eyes roughly at y=1.2 relative to player group's origin (feet)
+
+        // Player Movement Variables
+        const playerSpeed = 0.1;
+        const playerCollisionBoxSize = new THREE.Vector3(0.5, 1.0, 0.5); // Width, Height, Depth of player's collision box
+        // Note: player.position is considered the bottom-center of this collision box.
+        let isJumping = false;
+        let velocityY = 0;
+        const gravity = 0.02; // Adjust as needed for jump feel
+        const jumpStrength = 0.3; // Adjust as needed for jump height
+        let onGround = true; // To track if player is on a surface
+        const keyboard = {};
+
+        // Converts a world coordinate to its nearest grid coordinate (center of the grid cell)
+        function worldToGrid(worldCoord) {
+            return Math.round(worldCoord / blockSize) * blockSize;
+        }
+
+        // Converts a world position vector to its nearest grid cell center
+        function worldVecToGridVec(worldVector) {
+            return new THREE.Vector3(
+                worldToGrid(worldVector.x),
+                worldToGrid(worldVector.y),
+                worldToGrid(worldVector.z)
+            );
+        }
+
+        // Gets the grid cell coordinates (indices) from a world position
+        function getGridCell(worldPosition) {
+            return {
+                x: Math.round(worldPosition.x / blockSize),
+                y: Math.round(worldPosition.y / blockSize),
+                z: Math.round(worldPosition.z / blockSize)
+            };
+        }
+
+        // Helper to check if a block exists at a given grid cell (integer coords)
+        function isBlockAtGridCell(gridX, gridY, gridZ) { // Takes integer grid coords
+            return placedBlocks.some(block =>
+                block.gridX === gridX &&
+                block.gridY === gridY &&
+                block.gridZ === gridZ
+            );
+        }
+
+        // Keyboard Event Listeners for Movement
+        document.addEventListener('keydown', (event) => {
+            keyboard[event.code] = true; // General key state update for movement
+            // Inside document.addEventListener('keydown', (event) => { ... });
+            if (event.code === 'Space' && onGround) { // Only jump if on the ground
+                isJumping = true;
+                onGround = false;
+                velocityY = jumpStrength;
+            }
+        });
+        document.addEventListener('keyup', (event) => {
+            keyboard[event.code] = false;
+        });
+
+        // Mouse Controls (Look and Shoot)
+        const euler = new THREE.Euler(0, 0, 0, 'YXZ'); // To control camera rotation
+        const PI_2 = Math.PI / 2; // For clamping pitch
+
+        function onMouseMove(event) {
+            if (document.pointerLockElement === canvas) {
+                const movementX = event.movementX || 0;
+                const movementY = event.movementY || 0;
+
+                // Rotate player (yaw)
+                player.rotation.y -= movementX * 0.002;
+
+                // Rotate camera (pitch)
+                euler.setFromQuaternion(camera.quaternion);
+                euler.x -= movementY * 0.002;
+                euler.x = Math.max(-PI_2, Math.min(PI_2, euler.x)); // Clamp pitch
+                camera.quaternion.setFromEuler(euler);
+            }
+        }
+
+        document.addEventListener('mousemove', onMouseMove, false);
+
+        // Listener for requesting pointer lock
+        canvas.addEventListener('click', () => {
+            if (document.pointerLockElement !== canvas) {
+                 canvas.requestPointerLock();
+            }
+        });
+
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement === canvas) {
+                console.log('Pointer Lock active');
+            } else {
+                console.log('Pointer Lock released');
+            }
+        }, false);
+
+        document.addEventListener('pointerlockerror', (event) => {
+            console.error('Pointer Lock Error:', event);
+        }, false);
+
+        document.addEventListener('mousedown', (event) => {
+            if (document.pointerLockElement === canvas && event.button === 0) { // 0 for left mouse button
+                if (previewBlock.visible) {
+                    // Create a new block at the previewBlock's position
+                    const newBlockGeometry = new THREE.BoxGeometry(blockSize, blockSize, blockSize);
+                    // Ensure the material is cloned if you plan to change properties per block later
+                    const newBlockMesh = new THREE.Mesh(newBlockGeometry, placedBlockMaterial.clone());
+
+                    newBlockMesh.position.copy(previewBlock.position);
+
+                    // Check for collision with player before placing (simple check)
+                    const playerBox = new THREE.Box3().setFromObject(player);
+                    const newBlockBox = new THREE.Box3().setFromObject(newBlockMesh);
+                    if (playerBox.intersectsBox(newBlockBox)) {
+                        console.log("Cannot place block inside player.");
+                        return;
+                    }
+
+                    scene.add(newBlockMesh);
+
+                    // Store block info, including its mesh for raycasting and collision
+                    const gridCell = getGridCell(newBlockMesh.position); // Get integer grid coordinates
+                    placedBlocks.push({
+                        x: newBlockMesh.position.x, // Store exact position for precision
+                        y: newBlockMesh.position.y,
+                        z: newBlockMesh.position.z,
+                        gridX: gridCell.x, // Store grid cell for quick checks
+                        gridY: gridCell.y,
+                        gridZ: gridCell.z,
+                        type: 'default', // Placeholder for different block types later
+                        mesh: newBlockMesh // Store the mesh itself
+                    });
+
+                    // Update the preview block's visibility/position based on the new block
+                    // This might involve re-running the preview logic or simply hiding it if the spot is now taken
+                    // For simplicity, the existing preview logic in animate() should handle this
+                    // because isBlockAtGridCell will now find the new block.
+                }
+            }
+        });
+
+        // 6. Create a simple render loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Update Player Position
+            // Update player bounding box
+            if (!player.userData.boundingBox) {
+                player.userData.boundingBox = new THREE.Box3();
+                }
+                player.userData.boundingBox.setFromObject(player);
+
+                const moveDirection = new THREE.Vector3();
+                const forward = new THREE.Vector3();
+                const right = new THREE.Vector3();
+
+                // Get player's forward direction (ignoring pitch from camera)
+                // Player's rotation.y is the yaw.
+                forward.set(Math.sin(player.rotation.y), 0, Math.cos(player.rotation.y)).normalize();
+                // Calculate right vector ( perpendicular to forward, in XZ plane)
+                right.set(forward.z, 0, -forward.x).normalize();
+
+
+                if (keyboard['ArrowUp'] || keyboard['KeyW']) {
+                    moveDirection.sub(forward); // Move forward along player's facing direction
+                }
+                if (keyboard['ArrowDown'] || keyboard['KeyS']) {
+                    moveDirection.add(forward); // Move backward
+                }
+                if (keyboard['ArrowLeft'] || keyboard['KeyA']) {
+                    moveDirection.sub(right); // Strafe left
+                }
+                if (keyboard['ArrowRight'] || keyboard['KeyD']) {
+                   moveDirection.add(right); // Strafe right
+                }
+
+                // --- XZ-AXIS MOVEMENT AND COLLISION ---
+                if (moveDirection.lengthSq() > 0) {
+                    moveDirection.normalize().multiplyScalar(playerSpeed);
+
+                    let targetPositionX = player.position.x + moveDirection.x;
+                    let targetPositionZ = player.position.z + moveDirection.z;
+
+                    // Store original values for separate axis checks
+                    const currentX = player.position.x;
+                    const currentZ = player.position.z;
+
+                    // Check X-axis movement
+                    player.position.x = targetPositionX; // Try moving along X
+                    const playerAABB_X_Check = new THREE.Box3(
+                        new THREE.Vector3(player.position.x - playerCollisionBoxSize.x / 2, player.position.y, player.position.z - playerCollisionBoxSize.z / 2),
+                        new THREE.Vector3(player.position.x + playerCollisionBoxSize.x / 2, player.position.y + playerCollisionBoxSize.y, player.position.z + playerCollisionBoxSize.z / 2)
+                    );
+
+                    let collisionX = false;
+                    for (const block of placedBlocks) {
+                        const blockAABB = new THREE.Box3().setFromObject(block.mesh);
+                        if (playerAABB_X_Check.intersectsBox(blockAABB)) {
+                            if (moveDirection.x > 0) { // Moving right
+                                player.position.x = blockAABB.min.x - playerCollisionBoxSize.x / 2 - 0.001;
+                            } else if (moveDirection.x < 0) { // Moving left
+                                player.position.x = blockAABB.max.x + playerCollisionBoxSize.x / 2 + 0.001;
+                            }
+                            collisionX = true;
+                            break;
+                        }
+                    }
+                    if (!collisionX) {
+                        // player.position.x is already set to targetPositionX if no collision
+                    } else {
+                        // If collision, player.position.x was adjusted.
+                    }
+
+                    // Check Z-axis movement (start from potentially X-adjusted position)
+                    player.position.z = targetPositionZ; // Try moving along Z
+                    const playerAABB_Z_Check = new THREE.Box3(
+                        new THREE.Vector3(player.position.x - playerCollisionBoxSize.x / 2, player.position.y, player.position.z - playerCollisionBoxSize.z / 2),
+                        new THREE.Vector3(player.position.x + playerCollisionBoxSize.x / 2, player.position.y + playerCollisionBoxSize.y, player.position.z + playerCollisionBoxSize.z / 2)
+                    );
+
+                    let collisionZ = false;
+                    for (const block of placedBlocks) {
+                        const blockAABB = new THREE.Box3().setFromObject(block.mesh);
+                        if (playerAABB_Z_Check.intersectsBox(blockAABB)) {
+                            if (moveDirection.z > 0) { // Moving "forward" (positive Z in Three.js can be away from camera depending on setup, this assumes standard controls where W is -Z or +Z based on camera)
+                                                       // Assuming standard FPS controls where W moves player along -Z world axis if player rotation is 0.
+                                                       // The moveDirection is already calculated based on player rotation.
+                                player.position.z = blockAABB.min.z - playerCollisionBoxSize.z / 2 - 0.001;
+                            } else if (moveDirection.z < 0) { // Moving "backward"
+                                player.position.z = blockAABB.max.z + playerCollisionBoxSize.z / 2 + 0.001;
+                            }
+                            collisionZ = true;
+                            break;
+                        }
+                    }
+                    if (!collisionZ) {
+                        // player.position.z is already set to targetPositionZ if no collision
+                    } else {
+                        // If collision, player.position.z was adjusted
+                    }
+                }
+                // --- END XZ-AXIS MOVEMENT ---
+                // --- Y-AXIS MOVEMENT AND COLLISION ---
+                let intendedYPlayerPosition = player.position.y; // Player's feet Y position
+
+                if (!onGround) {
+                    velocityY -= gravity;
+                    intendedYPlayerPosition += velocityY;
+                }
+
+                let collisionY = false;
+
+                // Player's AABB at the *intended* Y position
+                const playerNextAABB_Y = new THREE.Box3(
+                    new THREE.Vector3(player.position.x - playerCollisionBoxSize.x / 2, intendedYPlayerPosition, player.position.z - playerCollisionBoxSize.z / 2),
+                    new THREE.Vector3(player.position.x + playerCollisionBoxSize.x / 2, intendedYPlayerPosition + playerCollisionBoxSize.y, player.position.z + playerCollisionBoxSize.z / 2)
+                );
+
+                for (const block of placedBlocks) {
+                    const blockAABB = new THREE.Box3().setFromObject(block.mesh); // Assuming block.mesh is available and correct
+
+                    if (playerNextAABB_Y.intersectsBox(blockAABB)) {
+                        // Check for horizontal overlap more explicitly for Y collision
+                        const horizontalOverlap = playerNextAABB_Y.max.x > blockAABB.min.x &&
+                                                  playerNextAABB_Y.min.x < blockAABB.max.x &&
+                                                  playerNextAABB_Y.max.z > blockAABB.min.z &&
+                                                  playerNextAABB_Y.min.z < blockAABB.max.z;
+
+                        if (horizontalOverlap) {
+                            if (velocityY <= 0 && playerNextAABB_Y.min.y < blockAABB.max.y) { // Moving/falling down & feet are about to go through block top
+                                player.position.y = blockAABB.max.y; // Land: Player's feet are at the top of the block
+                                velocityY = 0;
+                                isJumping = false;
+                                onGround = true;
+                                collisionY = true;
+                                break;
+                            } else if (velocityY > 0 && playerNextAABB_Y.max.y > blockAABB.min.y) { // Moving up & head is about to hit block bottom
+                                player.position.y = blockAABB.min.y - playerCollisionBoxSize.y; // Hit head: Player's feet adjust
+                                velocityY = 0;
+                                collisionY = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!collisionY) {
+                    player.position.y = intendedYPlayerPosition; // Apply the intended Y movement
+                    const currentTerrainHeight = getTerrainHeight(player.position.x, player.position.z); // This is 0 for flat ground
+
+                    if (player.position.y <= currentTerrainHeight) { // Feet at or below ground
+                        player.position.y = currentTerrainHeight;
+                        velocityY = 0;
+                        isJumping = false;
+                        onGround = true;
+                    } else {
+                        onGround = false; // Player is in the air
+                    }
+                }
+                // --- END Y-AXIS MOVEMENT ---
+            }
+
+            // Camera is now a child of player, so its position and rotation are relative.
+            // No need for manual camera following code here. Player rotation handles Y-axis look.
+            // Camera's own rotation handles X-axis look (pitch).
+
+            // Update Preview Block Position
+            const lookDirection = new THREE.Vector3();
+            camera.getWorldDirection(lookDirection);
+            raycaster.set(camera.getWorldPosition(new THREE.Vector3()), lookDirection);
+
+            // Objects to intersect: groundPlane and placedBlocks meshes
+            // We need to get the actual mesh objects from placedBlocks
+            const blockMeshes = placedBlocks.map(b => b.mesh).filter(m => m); // Assuming 'mesh' property will be added to placedBlocks items
+            const intersectableObjects = [groundPlane, ...blockMeshes]; // groundPlane must be defined
+
+            const intersects = raycaster.intersectObjects(intersectableObjects, false); // non-recursive
+
+            if (intersects.length > 0) {
+                const intersection = intersects[0];
+                const point = intersection.point;
+                const normal = intersection.face.normal;
+
+                // Calculate position for the new block: move half a block away from the intersection point, in the direction of the normal
+                // This places the new block ON TOP of the intersected face.
+                const placementOffset = new THREE.Vector3().copy(normal).multiplyScalar(blockSize / 2);
+                const previewPosition = new THREE.Vector3().addVectors(point, placementOffset);
+
+                // Snap to grid: Use the center of the grid cell this position falls into.
+                // We want to place it *adjacent* to the hit block, so we adjust by the normal.
+                // The raw intersection point is on the surface of the existing block.
+                // The normal vector of the intersected face tells us which direction is "outward".
+                // So, `point.add(normal.multiplyScalar(blockSize * 0.5))` should give us a point just outside the intersected block.
+                // Then we snap *that* point to the grid.
+
+                let snappedPos = new THREE.Vector3(
+                    Math.round(previewPosition.x / blockSize) * blockSize,
+                    Math.round(previewPosition.y / blockSize) * blockSize,
+                    Math.round(previewPosition.z / blockSize) * blockSize
+                );
+
+                // If the normal is strongly pointing along an axis, it means we hit a face squarely.
+                // We want to place the block *adjacent* to this face.
+                // The `point` is on the surface. `normal` points outwards from the surface.
+                // So, `targetPos = point + normal * (blockSize / 2)` should be the center of the cell *on* the surface.
+                // Then `targetPos = point + normal * blockSize` should be the center of the cell *adjacent* to the surface.
+                // Let's try a simpler approach for now: calculate the center of the cell the intersection point is in,
+                // then add the normal scaled by blockSize to get the adjacent cell.
+
+                const hitBlockCenter = worldVecToGridVec(intersection.object.position); // Center of the hit object (if it's a block)
+                                                                                    // For ground, this is less useful.
+
+                // Position the preview block in the grid cell *adjacent* to the intersected face.
+                // intersection.point is the exact point of collision.
+                // intersection.face.normal is the normal of the face that was hit.
+                const potentialPosition = new THREE.Vector3()
+                    .copy(intersection.point)
+                    .add(new THREE.Vector3().copy(intersection.face.normal).multiplyScalar(blockSize * 0.01)); // Move slightly into the adjacent cell
+
+                const finalPreviewPos = worldVecToGridVec(potentialPosition);
+
+                // Ensure Y is at least half block size if placing on flat ground from above
+                if (intersection.object === groundPlane && normal.y > 0.9) { // Hit top of ground plane
+                     finalPreviewPos.y = Math.max(finalPreviewPos.y, blockSize / 2);
+                }
+
+                // Check if this cell is already occupied (more robust check needed later if complex shapes)
+                const gridCell = getGridCell(finalPreviewPos);
+                if (!isBlockAtGridCell(gridCell.x, gridCell.y, gridCell.z)) {
+                    previewBlock.position.copy(finalPreviewPos);
+                    previewBlock.visible = true;
+                } else {
+                    previewBlock.visible = false; // Can't place here
+                }
+
+            } else {
+                previewBlock.visible = false; // No valid intersection
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // 7. Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

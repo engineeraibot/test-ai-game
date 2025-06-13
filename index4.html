@@ -79,22 +79,11 @@
         function getTerrainHeight(worldX, worldZ) {
             // For a flat ground plane at y=0
             return 0;
-            /*
-            // Original raycasting logic - keep commented out or remove if only flat ground is desired
-            if (!groundPlane) return 0;
-            const rayOrigin = new THREE.Vector3(worldX, 50, worldZ);
-            const rayDirection = new THREE.Vector3(0, -1, 0);
-            raycaster.set(rayOrigin, rayDirection);
-            const intersects = raycaster.intersectObject(groundPlane, false);
-            if (intersects.length > 0) {
-                return intersects[0].point.y;
-            }
-            return 0;
-            */
         }
 
         // Create Player Group (acting as the player)
         const player = new THREE.Group();
+        player.userData.boundingBox = new THREE.Box3(); // Initialize boundingBox here
         player.position.set(0, getTerrainHeight(0, 0), 0); // Set initial Y based on terrain
         scene.add(player);
 
@@ -261,10 +250,7 @@
 
             // Update Player Position
             // Update player bounding box
-            if (!player.userData.boundingBox) {
-                player.userData.boundingBox = new THREE.Box3();
-                }
-                player.userData.boundingBox.setFromObject(player);
+            player.userData.boundingBox.setFromObject(player);
 
                 const moveDirection = new THREE.Vector3();
                 const forward = new THREE.Vector3();
@@ -272,7 +258,9 @@
 
                 // Get player's forward direction (ignoring pitch from camera)
                 // Player's rotation.y is the yaw.
-                forward.set(Math.sin(player.rotation.y), 0, Math.cos(player.rotation.y)).normalize();
+                camera.getWorldDirection(forward);
+                forward.y = 0; // Keep movement in the XZ plane
+                forward.normalize();
                 // Calculate right vector ( perpendicular to forward, in XZ plane)
                 right.set(forward.z, 0, -forward.x).normalize();
 
@@ -495,7 +483,6 @@
 
             renderer.render(scene, camera);
         }
-        animate();
 
         // 7. Handle window resize
         window.addEventListener('resize', () => {
@@ -503,6 +490,7 @@
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
+        animate();
     </script>
 </body>
 </html>

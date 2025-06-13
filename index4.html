@@ -162,6 +162,7 @@
 
         // Animation State Variables
         let isMoving = false;
+        let mouseHasMoved = false; // Tracks if mouse has moved since pointer lock
         const walkAnimationSpeed = 5; // Speed of the walk cycle animation
 
         // Converts a world coordinate to its nearest grid coordinate (center of the grid cell)
@@ -224,6 +225,8 @@
                 euler.x = Math.max(-PI_2, Math.min(PI_2, euler.x)); // Clamp pitch
                 euler.y = cameraOrbitYaw;
                 camera.quaternion.setFromEuler(euler);
+
+                mouseHasMoved = true; // Indicate that mouse movement has occurred
             }
         }
 
@@ -477,8 +480,9 @@
                 // --- END Y-AXIS MOVEMENT ---
 
             // Update Preview Block Position
-            const lookDirection = new THREE.Vector3();
-            camera.getWorldDirection(lookDirection);
+            if (mouseHasMoved) { // Check if mouse has moved
+                const lookDirection = new THREE.Vector3();
+                camera.getWorldDirection(lookDirection);
             const rayOrigin = camera.getWorldPosition(new THREE.Vector3());
             raycaster.set(rayOrigin, lookDirection);
             console.log("Raycaster origin:", rayOrigin, "direction:", lookDirection);
@@ -563,6 +567,7 @@
                 if (oldVisibility !== previewBlock.visible) {
                     console.log("previewBlock.visible changed from", oldVisibility, "to", previewBlock.visible, "(no intersection)");
                 }
+                mouseHasMoved = false; // Reset the flag after updating
             }
 
             // Camera positioning logic

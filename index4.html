@@ -347,6 +347,7 @@
                 // --- XZ-AXIS MOVEMENT AND COLLISION ---
                 if (moveDirection.lengthSq() > 0) {
                     moveDirection.normalize().multiplyScalar(playerSpeed);
+                    player.rotation.y = Math.atan2(moveDirection.x, moveDirection.z);
 
                     let targetPositionX = player.position.x + moveDirection.x;
                     let targetPositionZ = player.position.z + moveDirection.z;
@@ -522,11 +523,16 @@
                 // Position the preview block in the grid cell *adjacent* to the intersected face.
                 // intersection.point is the exact point of collision.
                 // intersection.face.normal is the normal of the face that was hit.
-                const potentialPosition = new THREE.Vector3()
-                    .copy(intersection.point)
-                    .add(new THREE.Vector3().copy(intersection.face.normal).multiplyScalar(blockSize * 0.01)); // Move slightly into the adjacent cell
+                // Calculate the center of the grid cell adjacent to the intersected face.
+                // intersection.point is the exact point of collision on the surface.
+                // intersection.face.normal points outward from that surface.
+                // We want to find the center of the block that would be placed on that face.
+                const adjacentCellCenterTarget = new THREE.Vector3()
+                    .copy(intersection.point) // Start at the surface point
+                    .add(intersection.face.normal.clone().multiplyScalar(blockSize / 2.0)); // Move along the normal by half a block size
 
-                const finalPreviewPos = worldVecToGridVec(potentialPosition);
+                // Snap this target position to the grid.
+                const finalPreviewPos = worldVecToGridVec(adjacentCellCenterTarget);
                 console.log("Calculated finalPreviewPos:", finalPreviewPos);
 
                 // Ensure Y is at least half block size if placing on flat ground from above

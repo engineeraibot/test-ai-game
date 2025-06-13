@@ -58,17 +58,44 @@
         directionalLight.position.set(0, 1, 0);
         scene.add(directionalLight);
 
-        // Create Ground Plane
-        const groundGeometry = new THREE.PlaneGeometry(100, 100);
+        // Create Ground Plane with segments for terrain
+        const groundGeometry = new THREE.PlaneGeometry(100, 100, 20, 20); // Added segments
+        const vertices = groundGeometry.attributes.position;
+        for (let i = 0; i < vertices.count; i++) {
+            const x = vertices.getX(i);
+            const y = vertices.getY(i); // This y is one of the plane's dimensions before rotation
+            // Modify the Z component of each vertex (which becomes world Y after rotation)
+            vertices.setZ(i, (Math.random() - 0.5) * 2); // Random height between -1 and 1
+        }
+        groundGeometry.computeVertexNormals(); // Important for lighting
+
         const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x4CAF50, side: THREE.DoubleSide });
         const groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
-        groundPlane.position.y = 0; // Position at y = 0
+        // groundPlane.position.y = 0; // Y position will be inherent from vertex modification if centered.
         groundPlane.rotation.x = -Math.PI / 2; // Rotate to be horizontal
         scene.add(groundPlane);
 
+        // Raycaster for terrain height calculation
+        const raycaster = new THREE.Raycaster();
+
+        function getTerrainHeight(worldX, worldZ) {
+            if (!groundPlane) return 0;
+
+            const rayOrigin = new THREE.Vector3(worldX, 50, worldZ); // Start high enough
+            const rayDirection = new THREE.Vector3(0, -1, 0);
+            raycaster.set(rayOrigin, rayDirection);
+
+            const intersects = raycaster.intersectObject(groundPlane, false);
+
+            if (intersects.length > 0) {
+                return intersects[0].point.y;
+            }
+            return 0; // Default if no intersection
+        }
+
         // Create Player Group (acting as the player)
         const player = new THREE.Group();
-        player.position.y = 0; // Pivot at the feet for the group
+        player.position.set(0, getTerrainHeight(0, 0), 0); // Set initial Y based on terrain
         scene.add(player);
 
         const playerBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 }); // Green
@@ -102,7 +129,7 @@
                 name: 'Pistol',
                 color: 0xff0000, // Projectile color
                 fireRate: 500, // milliseconds per shot
-                projectileSpeed: 0.8, // Increased speed
+                projectileSpeed: 1.2, // Increased speed
                 pickupColor: 0xcccccc, // Color of the pickup box
                 damage: 25 // Updated damage
             },
@@ -110,7 +137,7 @@
                 name: 'Machine Gun',
                 color: 0xffff00, // Yellow projectiles
                 fireRate: 100, // Faster fire rate
-                projectileSpeed: 1.0, // Increased speed
+                projectileSpeed: 1.5, // Increased speed
                 pickupColor: 0x00ff00, // Green pickup box
                 damage: 15 // Updated damage
             }
@@ -134,6 +161,8 @@
 
         // Enemy Variables
         const enemies = [];
+        const activeExplosions = []; // Array for active explosions
+        const castleParts = []; // Array for collidable castle parts
         // Enemy Geometry: Cylinder (radiusTop, radiusBottom, height, radialSegments) - REPLACED
         // const enemyGeometry = new THREE.CylinderGeometry(0.4, 0.4, 1.2, 16);
         const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 }); // Red color for enemies
@@ -183,6 +212,41 @@
             }
         });
 
+        // Create Explosion Function
+        function createExplosion(position, color) {
+            const particleCount = 20;
+            const particles = new THREE.BufferGeometry();
+            const pMaterial = new THREE.PointsMaterial({
+                color: color || 0xFF0000, // Default to red, can pass enemy color
+                size: 0.1,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending // For a brighter effect
+            });
+
+            const particlePositions = [];
+            const particleVelocities = [];
+
+            for (let i = 0; i < particleCount; i++) {
+                particlePositions.push(position.x, position.y + 0.5, position.z); // Start at enemy center
+
+                const vx = (Math.random() - 0.5) * 0.5; // Random velocity
+                const vy = (Math.random() - 0.5) * 0.5;
+                const vz = (Math.random() - 0.5) * 0.5;
+                particleVelocities.push(vx, vy, vz);
+            }
+
+            particles.setAttribute('position', new THREE.Float32BufferAttribute(particlePositions, 3));
+
+            const particleSystem = new THREE.Points(particles, pMaterial);
+            particleSystem.userData.velocities = particleVelocities;
+            particleSystem.userData.life = 1.0; // How long the explosion lasts (e.g., 1 second)
+            particleSystem.userData.startTime = clock.getElapsedTime();
+
+            scene.add(particleSystem);
+            activeExplosions.push(particleSystem);
+        }
+
         // Listener for shooting
         document.addEventListener('mousedown', (event) => {
             // Check if pointer is locked, game is not over, and it's the left mouse button (button code 0)
@@ -196,14 +260,32 @@
                 projectile.userData.boundingBox = new THREE.Box3().setFromObject(projectile); // Initialize bounding box
 
                 const direction = new THREE.Vector3();
-                camera.getWorldDirection(direction); // Projectiles go where the camera is looking
+                camera.getWorldDirection(direction); // Aiming direction from camera
 
-                // Spawn projectile slightly in front of the camera, along its direction
                 const spawnPosition = new THREE.Vector3();
-                camera.getWorldPosition(spawnPosition); // Get camera's world position
-                projectile.position.copy(spawnPosition).addScaledVector(direction, 1.5); // Spawn 1.5 units in front of camera
+                const cameraWorldPosition = new THREE.Vector3();
+                camera.getWorldPosition(cameraWorldPosition);
 
-                projectile.velocity = direction.multiplyScalar(currentPlayerWeapon.projectileSpeed);
+                const weaponTipWorldPosition = new THREE.Vector3();
+                player.userData.heldWeaponMesh.getWorldPosition(weaponTipWorldPosition);
+
+                // Calculate the vector from the camera to the weapon tip
+                const vectorFromCameraToWeaponTip = new THREE.Vector3().subVectors(weaponTipWorldPosition, cameraWorldPosition);
+
+                // Project this vector onto the camera's line of sight to find the distance along the sightline
+                // to a point perpendicular to the weapon's tip.
+                const projectionDistance = vectorFromCameraToWeaponTip.dot(direction);
+
+                // Spawn the projectile along the camera's sightline at this projected distance,
+                // plus a small offset to ensure it clears the "virtual" tip of the gun.
+                // The gun's actual model length is 0.4, so 0.2 is a reasonable offset to represent its "tip" from its center.
+                // We use projectionDistance to ensure it's at the correct depth relative to the camera.
+                // A small positive value like 0.1 ensures it spawns slightly in front of this projected point.
+                spawnPosition.copy(cameraWorldPosition).addScaledVector(direction, projectionDistance + 0.1);
+
+
+                projectile.position.copy(spawnPosition);
+                projectile.velocity = direction.normalize().multiplyScalar(currentPlayerWeapon.projectileSpeed);
 
                 projectiles.push(projectile);
                 scene.add(projectile);
@@ -227,8 +309,8 @@
         function spawnEnemy() {
             const enemy = new THREE.Group(); // Enemies are now groups
             enemy.position.x = (Math.random() - 0.5) * 20;
-            enemy.position.y = 0; // Base of the enemy group is on the ground
             enemy.position.z = (Math.random() - 0.5) * 20 - 10;
+            enemy.position.y = getTerrainHeight(enemy.position.x, enemy.position.z); // Set Y based on terrain
 
             const lowerBodyHeight = 0.7;
             const upperBodyHeight = 0.5;
@@ -271,8 +353,8 @@
             const pickupMesh = pickupGroup; // Use the group as the main pickup object
 
             pickupMesh.position.x = (Math.random() - 0.5) * 15;
-            pickupMesh.position.y = 0.125; // Fixed Y position for the gun model to sit on ground
             pickupMesh.position.z = (Math.random() - 0.5) * 15;
+            pickupMesh.position.y = getTerrainHeight(pickupMesh.position.x, pickupMesh.position.z) + 0.125; // Adjust Y for terrain
 
             pickupMesh.weaponType = weaponType;
             pickupMesh.userData.boundingBox = new THREE.Box3().setFromObject(pickupMesh); // Initialize bounding box
@@ -299,7 +381,8 @@
             leavesMesh.position.y = trunkHeight + leavesHeight / 2;
             tree.add(leavesMesh);
 
-            tree.position.set(x, 0, z); // Base of the tree trunk on the ground
+            tree.position.set(x, 0, z); // Set X and Z first
+            tree.position.y = getTerrainHeight(x, z); // Then set Y based on terrain
             scene.add(tree);
             // Future: Could add tree.userData.boundingBox if trees need interaction
         }
@@ -312,9 +395,77 @@
             const rockMat = new THREE.MeshStandardMaterial({ color: 0x808080 }); // Grey
             const rockMesh = new THREE.Mesh(rockGeo, rockMat);
 
-            rockMesh.position.set(x, rockSize / 2, z); // Bottom of the rock on the ground
+            rockMesh.position.set(x, 0, z); // Set X and Z first
+            rockMesh.position.y = getTerrainHeight(x, z) + rockSize / 2; // Adjust Y for terrain and rock size
             scene.add(rockMesh);
             // Future: Could add rockMesh.userData.boundingBox if rocks need interaction
+        }
+
+        function createCastle() {
+            const castleGroup = new THREE.Group(); // Parent group for the castle
+            // Ensure groundPlane is available for getTerrainHeight, otherwise default Y or error
+            if (!groundPlane) {
+                console.error("groundPlane not initialized before createCastle() call. Castle may not sit on terrain correctly.");
+            }
+
+            const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x7A7A7A, metalness: 0.2, roughness: 0.9 }); // Stone grey
+
+            // Define castle base position to easily move the whole structure
+            const castleBaseX = 0;
+            const castleBaseZ = -30; // Position the castle further away
+
+            // Helper function to get terrain height or default
+            function getSafeTerrainHeight(x, z) {
+                if (typeof getTerrainHeight === 'function') {
+                    return getTerrainHeight(x, z);
+                }
+                return 0; // Default if terrain function not ready
+            }
+
+            // Main Wall
+            const mainWallGeo = new THREE.BoxGeometry(12, 5, 1.5); // width, height, depth
+            const mainWall = new THREE.Mesh(mainWallGeo, wallMaterial);
+            const mainWallPosX = castleBaseX;
+            const mainWallPosZ = castleBaseZ;
+            mainWall.position.set(mainWallPosX, getSafeTerrainHeight(mainWallPosX, mainWallPosZ) + 2.5, mainWallPosZ); // + half height
+            mainWall.userData.isCastlePart = true;
+            mainWall.userData.boundingBox = new THREE.Box3().setFromObject(mainWall);
+            castleGroup.add(mainWall);
+            castleParts.push(mainWall);
+
+            // Left Tower
+            const towerGeo = new THREE.CylinderGeometry(2, 2, 7, 16); // radiusTop, radiusBottom, height, segments
+            const leftTower = new THREE.Mesh(towerGeo, wallMaterial);
+            const leftTowerPosX = castleBaseX - 7; // Offset from mainWall center
+            const leftTowerPosZ = castleBaseZ;
+            leftTower.position.set(leftTowerPosX, getSafeTerrainHeight(leftTowerPosX, leftTowerPosZ) + 3.5, leftTowerPosZ); // + half height
+            leftTower.userData.isCastlePart = true;
+            leftTower.userData.boundingBox = new THREE.Box3().setFromObject(leftTower);
+            castleGroup.add(leftTower);
+            castleParts.push(leftTower);
+
+            // Right Tower
+            const rightTower = new THREE.Mesh(towerGeo, wallMaterial);
+            const rightTowerPosX = castleBaseX + 7; // Offset from mainWall center
+            const rightTowerPosZ = castleBaseZ;
+            rightTower.position.set(rightTowerPosX, getSafeTerrainHeight(rightTowerPosX, rightTowerPosZ) + 3.5, rightTowerPosZ); // + half height
+            rightTower.userData.isCastlePart = true;
+            rightTower.userData.boundingBox = new THREE.Box3().setFromObject(rightTower);
+            castleGroup.add(rightTower);
+            castleParts.push(rightTower);
+
+            // Optional: A front gate structure (visual, can be made collidable too)
+            const gateGeo = new THREE.BoxGeometry(4, 3, 1);
+            const gate = new THREE.Mesh(gateGeo, wallMaterial);
+            const gatePosX = castleBaseX;
+            const gatePosZ = castleBaseZ + 1.25; // Slightly in front of the main wall
+            gate.position.set(gatePosX, getSafeTerrainHeight(gatePosX, gatePosZ) + 1.5, gatePosZ);
+            gate.userData.isCastlePart = true; // Make it collidable
+            gate.userData.boundingBox = new THREE.Box3().setFromObject(gate);
+            castleGroup.add(gate);
+            castleParts.push(gate);
+
+            scene.add(castleGroup); // Add the whole castle to the scene
         }
 
         // Initial Enemy Spawning
@@ -339,6 +490,7 @@
                 spawnRock(x, z);
             }
         }
+        createCastle(); // Create the castle after other environment
 
 
         // 6. Create a simple render loop
@@ -385,6 +537,7 @@
                     moveDirection.normalize().multiplyScalar(playerSpeed);
                     player.position.add(moveDirection);
                 }
+                player.position.y = getTerrainHeight(player.position.x, player.position.z); // Adjust player Y to terrain
             }
 
             // Update Projectile Positions & Collision Detection
@@ -410,9 +563,17 @@
                         console.log("Enemy hit, health: " + enemy.health + ", Weapon Damage: " + currentPlayerWeapon.damage);
 
                         if (enemy.health <= 0) {
-                            scene.remove(enemy);
-                            if (enemy.geometry) enemy.geometry.dispose();
-                            if (enemy.material) enemy.material.dispose();
+                            createExplosion(enemy.position.clone(), enemyMaterial.color.getHex()); // Call explosion here
+
+                            // Corrected disposal for enemy (which is a THREE.Group)
+                            while(enemy.children.length > 0){
+                                const child = enemy.children[0];
+                                enemy.remove(child);
+                                if (child.geometry) child.geometry.dispose();
+                                if (child.material) child.material.dispose();
+                            }
+                            scene.remove(enemy); // Remove the group itself after children are handled
+
                             enemies.splice(j, 1);
                             score += 100; // Add score
                             console.log("Enemy destroyed! Score: " + score);
@@ -421,11 +582,59 @@
                     }
                 }
 
+                // Projectile vs Castle Collision
+                if (!projectileRemoved) { // Only check castle collision if not already hit an enemy
+                    for (let k = castleParts.length - 1; k >= 0; k--) {
+                        const part = castleParts[k];
+                        // Ensure both projectile and castle part have bounding boxes initialized
+                        if (p.userData.boundingBox && part.userData.boundingBox && p.userData.boundingBox.intersectsBox(part.userData.boundingBox)) {
+                            scene.remove(p);
+                            if (p.geometry) p.geometry.dispose();
+                            if (p.material) p.material.dispose();
+                            projectiles.splice(i, 1);
+                            projectileRemoved = true; // Mark projectile as removed
+                            // Optional: Add a visual/audio cue for hitting the castle
+                            // console.log("Projectile hit castle part");
+                            break; // Exit castle parts loop since projectile is removed
+                        }
+                    }
+                }
+
                 if (!projectileRemoved && p.position.lengthSq() > 10000) { // Boundary check if not removed by collision
                     scene.remove(p);
                     if (p.geometry) p.geometry.dispose();
                     if (p.material) p.material.dispose();
                     projectiles.splice(i, 1);
+                }
+            }
+
+            // Update Active Explosions
+            for (let i = activeExplosions.length - 1; i >= 0; i--) {
+                const explosion = activeExplosions[i];
+                const positions = explosion.geometry.attributes.position.array;
+                const velocities = explosion.userData.velocities;
+                // let stillAlive = false; // stillAlive was not used, removed.
+
+                for (let j = 0; j < positions.length; j += 3) {
+                    positions[j] += velocities[j] * 0.1; // Adjust speed factor as needed
+                    positions[j+1] += velocities[j+1] * 0.1;
+                    positions[j+2] += velocities[j+2] * 0.1;
+
+                    // Simple gravity for particles
+                    velocities[j+1] -= 0.01; // Gravity effect
+                }
+                explosion.geometry.attributes.position.needsUpdate = true;
+
+                // Fade out and remove
+                const elapsedTime = clock.getElapsedTime() - explosion.userData.startTime;
+                if (elapsedTime < explosion.userData.life) {
+                    explosion.material.opacity = 1.0 - (elapsedTime / explosion.userData.life);
+                    // stillAlive = true; // stillAlive was not used, removed.
+                } else {
+                    scene.remove(explosion);
+                    if (explosion.geometry) explosion.geometry.dispose();
+                    if (explosion.material) explosion.material.dispose();
+                    activeExplosions.splice(i, 1);
                 }
             }
 
@@ -441,14 +650,15 @@
 
                 const enemySpeed = 0.01; // Adjust as needed
                 enemy.position.addScaledVector(directionToPlayer, enemySpeed);
-                // enemy.position.y is set at spawn and collision doesn't change it.
+                enemy.position.y = getTerrainHeight(enemy.position.x, enemy.position.z); // Adjust enemy Y to terrain
 
                 // Update enemy bounding box after moving and before lookAt/collision
                 enemy.userData.boundingBox.setFromObject(enemy);
 
-                // Make enemy face the player (optional, simple rotation)
-                const lookAtPosition = new THREE.Vector3(player.position.x, enemy.position.y, player.position.z);
-                enemy.lookAt(lookAtPosition);
+                // Make enemy face the player
+                // Player's approximate head/torso height is player.position.y + 1.0 to 1.2
+                const targetLookAt = new THREE.Vector3(player.position.x, player.position.y + 1.0, player.position.z);
+                enemy.lookAt(targetLookAt);
 
                 // Player-Enemy Collision
                 // Player's bounding box is updated at the start of animate loop.
@@ -457,9 +667,15 @@
                     playerHealth -= 10;
                     console.log("Player hit by enemy! Health: " + playerHealth);
 
-                    scene.remove(enemy); // Remove enemy that hit player
-                    if (enemy.geometry) enemy.geometry.dispose();
-                    if (enemy.material) enemy.material.dispose();
+                    // Corrected disposal for enemy (which is a THREE.Group)
+                    while(enemy.children.length > 0){
+                        const child = enemy.children[0];
+                        enemy.remove(child);
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) child.material.dispose();
+                    }
+                    scene.remove(enemy); // Remove the group itself after children are handled
+
                     enemies.splice(i, 1); // Remove from array
                     console.log("Enemy that hit player removed.");
 
@@ -566,16 +782,33 @@
             projectiles.length = 0;
 
             enemies.forEach(e => {
+                // Corrected disposal for enemy (which is a THREE.Group) in reset
+                while(e.children.length > 0){
+                    const child = e.children[0];
+                    e.remove(child);
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                }
                 scene.remove(e);
-                if (e.geometry) e.geometry.dispose();
-                if (e.material) e.material.dispose();
             });
             enemies.length = 0;
 
+            activeExplosions.forEach(exp => {
+                scene.remove(exp);
+                if (exp.geometry) exp.geometry.dispose();
+                if (exp.material) exp.material.dispose();
+            });
+            activeExplosions.length = 0;
+
             weaponPickups.forEach(wp => {
+                // Corrected disposal for weapon pickups (which are Groups) in reset
+                while(wp.children.length > 0){
+                    const child = wp.children[0];
+                    wp.remove(child);
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) child.material.dispose();
+                }
                 scene.remove(wp);
-                if (wp.geometry) wp.geometry.dispose();
-                if (wp.material) wp.material.dispose();
             });
             weaponPickups.length = 0;
 
@@ -587,7 +820,7 @@
             spawnWeaponPickup(weaponTypes.machineGun); // Ensure this function exists and is correct
 
             // Reset player position
-            player.position.set(0, 0, 0); // Player group pivot is at feet (y=0)
+            player.position.set(0, getTerrainHeight(0,0), 0); // Adjust Y for terrain
 
             // Hide game over screen
             gameOverScreen.style.display = 'none';

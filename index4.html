@@ -521,7 +521,7 @@
 
                 // If the normal is strongly pointing along an axis, it means we hit a face squarely.
                 // We want to place the block *adjacent* to this face.
-                // The `point` is on the surface. `normal` points outwards from the surface.
+                // The `point` is on the. `normal` points outwards from the surface.
                 // So, `targetPos = point + normal * (blockSize / 2)` should be the center of the cell *on* the surface.
                 // Then `targetPos = point + normal * blockSize` should be the center of the cell *adjacent* to the surface.
                 // Let's try a simpler approach for now: calculate the center of the cell the intersection point is in,

@@ -89,26 +89,57 @@
 
         const playerBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00 }); // Green
 
+        // Player dimensions
+        const legHeight = 0.6;
+        const torsoHeight = 0.6;
+        const headRadius = 0.25;
+
+        // Player Legs
+        const legGeometry = new THREE.CylinderGeometry(0.15, 0.15, legHeight, 6);
+        const leftLeg = new THREE.Mesh(legGeometry, playerBodyMaterial);
+        leftLeg.position.set(-0.15, legHeight / 2, 0);
+        player.add(leftLeg);
+
+        const rightLeg = new THREE.Mesh(legGeometry, playerBodyMaterial);
+        rightLeg.position.set(0.15, legHeight / 2, 0);
+        player.add(rightLeg);
+
         // Player Body (Cylinder - low-poly)
-        const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, 1.0, 8); // radiusTop, radiusBottom, height, radialSegments
+        const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.3, torsoHeight, 8); // radiusTop, radiusBottom, height, radialSegments
         const playerBody = new THREE.Mesh(bodyGeometry, playerBodyMaterial);
-        playerBody.position.y = 0.5; // Half height, so bottom is at y=0 of the group
+        playerBody.position.y = legHeight + (torsoHeight / 2); // Positioned on top of legs
         player.add(playerBody);
 
         // Player Head (Sphere - low-poly)
-        const headGeometry = new THREE.SphereGeometry(0.25, 8, 8); // radius, widthSegments, heightSegments
+        const headGeometry = new THREE.SphereGeometry(headRadius, 8, 8); // radius, widthSegments, heightSegments
         const playerHead = new THREE.Mesh(headGeometry, playerBodyMaterial); // Can use same material
-        playerHead.position.y = 1.0 + 0.25; // Position on top of the body (body height + head radius)
+        playerHead.position.y = legHeight + torsoHeight + headRadius; // Position on top of the body
         player.add(playerHead);
+
+        // Player Arms
+        const armGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.75, 6); // radiusTop, radiusBottom, height, radialSegments
+        const leftArm = new THREE.Mesh(armGeometry, playerBodyMaterial);
+        leftArm.position.x = -0.45; // To the side of the body
+        leftArm.position.y = legHeight + torsoHeight * 0.7;   // Roughly shoulder height on new torso
+        leftArm.rotation.z = Math.PI / 8; // Angled slightly downwards
+        player.add(leftArm);
+
+        const rightArm = new THREE.Mesh(armGeometry, playerBodyMaterial);
+        rightArm.position.x = 0.45;  // To the side of the body
+        rightArm.position.y = legHeight + torsoHeight * 0.7;   // Roughly shoulder height on new torso
+        rightArm.rotation.z = -Math.PI / 8; // Angled slightly downwards
+        player.add(rightArm);
 
         // Attach camera to player group
         // player.add(camera); // Decouple camera from player group
         camera.position.set(0, 2, 5); // Eyes roughly at y=1.2 relative to player group's origin (feet)
-        camera.lookAt(player.position.clone().add(new THREE.Vector3(0, 1.0, 0))); // Initial lookAt
+        // Initial lookAt will be updated in animate loop, but set a reasonable default
+        camera.lookAt(player.position.clone().add(new THREE.Vector3(0, legHeight + torsoHeight / 2, 0)));
+
 
         // Player Movement Variables
         const playerSpeed = 0.1;
-        const playerCollisionBoxSize = new THREE.Vector3(0.5, 1.0, 0.5); // Width, Height, Depth of player's collision box
+        const playerCollisionBoxSize = new THREE.Vector3(0.5, legHeight + torsoHeight, 0.5); // Width, Height, Depth
         // Note: player.position is considered the bottom-center of this collision box.
         let isJumping = false;
         let velocityY = 0;
@@ -178,21 +209,6 @@
                 euler.x = Math.max(-PI_2, Math.min(PI_2, euler.x)); // Clamp pitch
                 euler.y = cameraOrbitYaw;
                 camera.quaternion.setFromEuler(euler);
-
-                // Player's head position or a point slightly above the player's main position
-                const targetPosition = player.position.clone().add(new THREE.Vector3(0, 1.0, 0)); // Adjust Y offset as needed for what to look at
-
-                // Calculate desired offset from the player (e.g., behind and slightly above)
-                const desiredOffset = new THREE.Vector3(0, 1.5, 5); // (x, y, z offset from target) - y is height, z is distance
-
-                // Rotate this offset by the camera's current quaternion (which includes mouse look)
-                const rotatedOffset = desiredOffset.clone().applyQuaternion(camera.quaternion);
-
-                // Set the camera's position
-                camera.position.copy(targetPosition).add(rotatedOffset);
-
-                // Ensure camera looks at the target position (e.g., player's head area)
-                camera.lookAt(targetPosition);
             }
         }
 
@@ -489,6 +505,23 @@
             } else {
                 previewBlock.visible = false; // No valid intersection
             }
+
+            // Camera positioning logic
+            // Player's head position or a point slightly above the player's main position
+            const targetPosition = player.position.clone().add(new THREE.Vector3(0, legHeight + torsoHeight, 0)); // Look at top of torso / base of head
+
+            // Calculate desired offset from the player (e.g., behind and slightly above)
+            const desiredOffset = new THREE.Vector3(0, 1.5, 5); // (x, y, z offset from target) - y is height, z is distance
+
+            // Rotate this offset by the camera's current quaternion (which includes mouse look)
+            // Note: camera.quaternion is updated in onMouseMove based on euler angles
+            const rotatedOffset = desiredOffset.clone().applyQuaternion(camera.quaternion);
+
+            // Set the camera's position
+            camera.position.copy(targetPosition).add(rotatedOffset);
+
+            // Ensure camera looks at the target position (e.g., player's head area)
+            camera.lookAt(targetPosition);
 
             renderer.render(scene, camera);
         }

@@ -59,13 +59,6 @@
 
         // Create Ground Plane with segments for terrain
         const groundGeometry = new THREE.PlaneGeometry(100, 100, 20, 20); // Added segments
-        // const vertices = groundGeometry.attributes.position; // REMOVE
-        // for (let i = 0; i < vertices.count; i++) { // REMOVE
-        //     const x = vertices.getX(i); // REMOVE
-        //     const y = vertices.getY(i); // REMOVE
-        //     vertices.setZ(i, (Math.random() - 0.5) * 2); // REMOVE
-        // } // REMOVE
-        // groundGeometry.computeVertexNormals(); // This can remain or be removed if not needed for flat plane
 
         const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x4CAF50, side: THREE.DoubleSide });
         const groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
@@ -162,7 +155,6 @@
 
         // Animation State Variables
         let isMoving = false;
-        let mouseHasMoved = false; // Tracks if mouse has moved since pointer lock
         const walkAnimationSpeed = 5; // Speed of the walk cycle animation
 
         // Converts a world coordinate to its nearest grid coordinate (center of the grid cell)
@@ -225,8 +217,6 @@
                 euler.x = Math.max(-PI_2, Math.min(PI_2, euler.x)); // Clamp pitch
                 euler.y = cameraOrbitYaw;
                 camera.quaternion.setFromEuler(euler);
-
-                mouseHasMoved = true; // Indicate that mouse movement has occurred
             }
         }
 
@@ -480,9 +470,8 @@
                 // --- END Y-AXIS MOVEMENT ---
 
             // Update Preview Block Position
-            if (mouseHasMoved) { // Check if mouse has moved
-                const lookDirection = new THREE.Vector3();
-                camera.getWorldDirection(lookDirection);
+			const lookDirection = new THREE.Vector3();
+			camera.getWorldDirection(lookDirection);
             const rayOrigin = camera.getWorldPosition(new THREE.Vector3());
             raycaster.set(rayOrigin, lookDirection);
             console.log("Raycaster origin:", rayOrigin, "direction:", lookDirection);
@@ -568,7 +557,6 @@
                     console.log("previewBlock.visible changed from", oldVisibility, "to", previewBlock.visible, "(no intersection)");
                 }
             }
-            mouseHasMoved = false; // CORRECT PLACEMENT: Reset flag after all conditional logic for preview block
 
             // Camera positioning logic
             // Player's head position or a point slightly above the player's main position
